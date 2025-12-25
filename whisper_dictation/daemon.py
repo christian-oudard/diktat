@@ -4,8 +4,9 @@
 import logging
 import os
 import signal
-import subprocess
 import sys
+
+from .text_output import type_text
 
 logging.basicConfig(
     level=logging.INFO,
@@ -99,8 +100,7 @@ def main():
         text = "".join(s.text for s in segments).strip()
 
         if text:
-            subprocess.run(["wtype", "--", text], check=False)
-            log.info(f"Typed {len(text)} chars.")
+            type_text(text)
 
     def toggle(sig, frame):
         nonlocal recording
