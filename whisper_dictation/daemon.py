@@ -9,7 +9,8 @@ import sys
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(message)s",
+    format="%(asctime)s %(message)s",
+    datefmt="%H:%M:%S",
     handlers=[
         logging.StreamHandler(),
         logging.FileHandler("/tmp/whisper-dictation-daemon.log", mode="w"),
@@ -99,7 +100,7 @@ def main():
 
         if text:
             subprocess.run(["wtype", "--", text], check=False)
-            log.info("Typed.")
+            log.info(f"Typed {len(text)} chars.")
 
     def toggle(sig, frame):
         nonlocal recording

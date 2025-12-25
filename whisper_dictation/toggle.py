@@ -4,7 +4,6 @@
 import os
 import signal
 import subprocess
-import sys
 
 PID_FILE = "/tmp/whisper-dictation-daemon.pid"
 
@@ -27,7 +26,7 @@ def main():
     if pid is None:
         # Start daemon (it auto-starts recording after loading)
         subprocess.Popen(
-            [sys.executable, "-m", "whisper_dictation.daemon"],
+            ["whisper-dictation-daemon"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
