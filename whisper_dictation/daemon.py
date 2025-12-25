@@ -31,12 +31,18 @@ def main():
     set_status(STATUS_LOADING)
 
     # Heavy imports
+    import huggingface_hub.errors
     import numpy as np
     import sounddevice as sd
     from faster_whisper import WhisperModel
 
     print(f"Loading {MODEL}...", file=sys.stderr)
-    model = WhisperModel(MODEL, device="cuda", compute_type="float16")
+    try:
+        model = WhisperModel(MODEL, device="cuda", compute_type="float16", local_files_only=True)
+    except huggingface_hub.errors.LocalEntryNotFoundError:
+        print(f"Model not cached. Download it first with:", file=sys.stderr)
+        print(f"  huggingface-cli download Systran/faster-whisper-{MODEL}", file=sys.stderr)
+        sys.exit(1)
     print("Model loaded.", file=sys.stderr)
 
     # State
