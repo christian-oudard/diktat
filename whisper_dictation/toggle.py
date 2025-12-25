@@ -27,7 +27,7 @@ def main():
     if pid is None:
         # Start daemon (it auto-starts recording after loading)
         subprocess.Popen(
-            ["whisper-dictation-daemon"],
+            [sys.executable, "-m", "whisper_dictation.daemon"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,

@@ -1,11 +1,21 @@
 #!/usr/bin/env python3
 """Whisper daemon - keeps model loaded, toggles recording on signal."""
 
+import logging
 import os
 import signal
 import subprocess
 import sys
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler("/tmp/whisper-dictation-daemon.log", mode="w"),
+    ],
+)
+log = logging.getLogger(__name__)
 
 MODEL = "tiny.en"
 SAMPLE_RATE = 16000
@@ -36,14 +46,14 @@ def main():
     import sounddevice as sd
     from faster_whisper import WhisperModel
 
-    print(f"Loading {MODEL}...", file=sys.stderr)
+    log.info(f"Loading {MODEL}...")
     try:
         model = WhisperModel(MODEL, device="cuda", compute_type="float16", local_files_only=True)
     except huggingface_hub.errors.LocalEntryNotFoundError:
-        print(f"Model not cached. Download it first with:", file=sys.stderr)
-        print(f"  huggingface-cli download Systran/faster-whisper-{MODEL}", file=sys.stderr)
+        log.error(f"Model not cached. Download it first with:")
+        log.error(f"  huggingface-cli download Systran/faster-whisper-{MODEL}")
         sys.exit(1)
-    print("Model loaded.", file=sys.stderr)
+    log.info("Model loaded.")
 
     # State
     recording = False
@@ -68,7 +78,7 @@ def main():
         stream.start()
         recording = True
         set_status(STATUS_REC)
-        print("Recording...", file=sys.stderr)
+        log.info("Recording...")
 
     def stop_recording():
         nonlocal recording
@@ -78,18 +88,18 @@ def main():
         signal.alarm(IDLE_TIMEOUT)  # Start idle timeout
 
         if not audio_chunks:
-            print("No audio.", file=sys.stderr)
+            log.info("No audio.")
             return
 
         audio = np.concatenate(audio_chunks)
-        print(f"Transcribing {len(audio)/SAMPLE_RATE:.1f}s...", file=sys.stderr)
+        log.info(f"Transcribing {len(audio)/SAMPLE_RATE:.1f}s...")
 
         segments, _ = model.transcribe(audio, language="en", beam_size=5, vad_filter=True)
         text = "".join(s.text for s in segments).strip()
 
         if text:
             subprocess.run(["wtype", "--", text], check=False)
-            print(f"Typed: {text}", file=sys.stderr)
+            log.info("Typed.")
 
     def toggle(sig, frame):
         nonlocal recording
@@ -108,12 +118,12 @@ def main():
             os.unlink(PID_FILE)
         except OSError:
             pass
-        print("Daemon stopped.", file=sys.stderr)
+        log.info("Daemon stopped.")
         sys.exit(0)
 
     def idle_timeout(sig, frame):
         if not recording:
-            print("Idle timeout, shutting down.", file=sys.stderr)
+            log.info("Idle timeout, shutting down.")
             shutdown(sig, frame)
         # If recording, ignore - alarm will be reset when recording stops
 
