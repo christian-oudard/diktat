@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Whisper daemon - keeps model loaded, toggles recording on signal."""
 
+import atexit
 import logging
 import os
 import signal
@@ -8,21 +9,24 @@ import sys
 
 from .text_output import type_text
 
+LOG_FILE = "/tmp/whisper-dictation-daemon.log"
+handlers: list[logging.Handler] = [logging.StreamHandler()]
+try:
+    handlers.append(logging.FileHandler(LOG_FILE, mode="w"))
+except OSError:
+    pass
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(message)s",
     datefmt="%H:%M:%S",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler("/tmp/whisper-dictation-daemon.log", mode="w"),
-    ],
+    handlers=handlers,
 )
 log = logging.getLogger(__name__)
 
 MODEL = "tiny.en"
 SAMPLE_RATE = 16000
 PID_FILE = "/tmp/whisper-dictation-daemon.pid"
-STATUS_FILE = "/tmp/nerd-dictation-status"
+STATUS_FILE = "/tmp/whisper-dictation-status"
 STATUS_LOADING = '<span color="#fabd2f">● LOAD</span>'
 STATUS_REC = '<span color="#fb4934">● REC</span>'
 IDLE_TIMEOUT = 15 * 60  # 15 minutes
@@ -36,11 +40,24 @@ def set_status(status: str):
         pass
 
 
+def cleanup():
+    for f in (PID_FILE, STATUS_FILE):
+        try:
+            os.unlink(f)
+        except OSError:
+            pass
+
+
 def main():
+    atexit.register(cleanup)
     # Write PID and show loading status before heavy imports
-    with open(PID_FILE, "w") as f:
-        f.write(str(os.getpid()))
-    set_status(STATUS_LOADING)
+    try:
+        with open(PID_FILE, "w") as f:
+            f.write(str(os.getpid()))
+        set_status(STATUS_LOADING)
+    except OSError as e:
+        log.error(f"Cannot write to /tmp: {e}")
+        sys.exit(1)
 
     # Heavy imports
     import huggingface_hub.errors
@@ -115,10 +132,6 @@ def main():
             stop_recording()
         stream.stop()
         stream.close()
-        try:
-            os.unlink(PID_FILE)
-        except OSError:
-            pass
         log.info("Daemon stopped.")
         sys.exit(0)
 

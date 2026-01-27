@@ -45,7 +45,7 @@ pkill -f whisper-dictation-daemon
 
 **Files:**
 - `/tmp/whisper-dictation-daemon.pid` - Daemon PID
-- `/tmp/nerd-dictation-status` - Status bar output (Pango markup)
+- `/tmp/whisper-dictation-status` - Status bar output (Pango markup)
 
 ## Dependencies
 
