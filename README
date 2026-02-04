@@ -23,7 +23,7 @@ Bind `whisper-dictation-toggle` to a key in your Sway config:
 - `whisper-dictation-toggle`: starts daemon if needed, toggles recording via signal
 
 The daemon stays running after first use for instant recording on subsequent toggles.
-It auto-shuts down after 5 minutes idle to free VRAM.
+It auto-shuts down after 15 minutes idle to free VRAM.
 
 ## Stop daemon manually
 

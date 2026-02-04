@@ -1,8 +1,8 @@
 [project]
 name = "whisper-dictation"
 version = "0.1.0"
-description = "Voice typing with Whisper"
-requires-python = ">=3.10"
+description = "Voice typing with Whisper large-v3-turbo"
+requires-python = ">=3.10,<3.14"
 dependencies = [
     "faster-whisper>=1.0.0",
     "sounddevice>=0.4.6",

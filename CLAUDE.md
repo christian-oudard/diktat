@@ -12,7 +12,6 @@ Whisper-based voice dictation for Linux/Sway/Wayland. Uses faster-whisper with G
   - `daemon.py` - Daemon that keeps Whisper model loaded in VRAM
   - `toggle.py` - Toggle command that starts daemon or toggles recording
 - `pyproject.toml` - Package definition with entry points
-- `toggle-nerd-dictation.bash` - Legacy nerd-dictation toggle script
 
 ## Key Commands
 
