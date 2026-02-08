@@ -69,7 +69,7 @@ def main():
     log.info(f"Loading {MODEL}...")
     try:
         model = WhisperModel(MODEL, device="cuda", compute_type="float16", local_files_only=True)
-    except RuntimeError:
+    except (RuntimeError, ValueError):
         log.info("CUDA not available, using CPU")
         model = WhisperModel(MODEL, device="cpu", compute_type="int8", local_files_only=True)
     except huggingface_hub.errors.LocalEntryNotFoundError:

@@ -1,13 +1,12 @@
 [project]
 name = "whisper-dictation"
 version = "0.1.0"
-description = "Voice typing with Whisper large-v3-turbo"
+description = "Voice typing with Whisper"
 requires-python = ">=3.10"
 dependencies = [
     "faster-whisper>=1.0.0",
     "sounddevice>=0.4.6",
     "numpy>=1.24.0",
-    "torch>=2.0.0",
 ]
 
 [project.scripts]
