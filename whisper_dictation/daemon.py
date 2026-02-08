@@ -6,6 +6,7 @@ import logging
 import os
 import signal
 import sys
+import time
 
 from .text_output import type_text
 
@@ -68,9 +69,12 @@ def main():
     log.info(f"Loading {MODEL}...")
     try:
         model = WhisperModel(MODEL, device="cuda", compute_type="float16", local_files_only=True)
+    except RuntimeError:
+        log.info("CUDA not available, using CPU")
+        model = WhisperModel(MODEL, device="cpu", compute_type="int8", local_files_only=True)
     except huggingface_hub.errors.LocalEntryNotFoundError:
         log.error(f"Model not cached. Download it first with:")
-        log.error(f"  huggingface-cli download Systran/faster-whisper-{MODEL}")
+        log.error(f"  uvx --from huggingface-hub hf download Systran/faster-whisper-{MODEL}")
         sys.exit(1)
     log.info("Model loaded.")
 
@@ -113,8 +117,10 @@ def main():
         audio = np.concatenate(audio_chunks)
         log.info(f"Transcribing {len(audio)/SAMPLE_RATE:.1f}s...")
 
+        t0 = time.monotonic()
         segments, _ = model.transcribe(audio, language="en", beam_size=5, vad_filter=True)
         text = "".join(s.text for s in segments).strip()
+        log.info(f"Transcribed in {time.monotonic()-t0:.2f}s")
 
         if text:
             type_text(text)
