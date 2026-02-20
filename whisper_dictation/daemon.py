@@ -123,7 +123,7 @@ def main():
         log.info(f"Transcribed in {time.monotonic()-t0:.2f}s")
 
         if text:
-            type_text(text)
+            type_text(text + " ")
 
     def toggle(sig, frame):
         nonlocal recording
