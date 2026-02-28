@@ -12,6 +12,7 @@ dependencies = [
 [project.scripts]
 whisper-dictation-daemon = "whisper_dictation.daemon:main"
 whisper-dictation-toggle = "whisper_dictation.toggle:main"
+whisper-dictation-repeat = "whisper_dictation.repeat:main"
 
 [tool.setuptools]
 packages = ["whisper_dictation"]

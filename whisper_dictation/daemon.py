@@ -28,6 +28,7 @@ MODEL = "tiny.en"
 SAMPLE_RATE = 16000
 PID_FILE = "/tmp/whisper-dictation-daemon.pid"
 STATUS_FILE = "/tmp/whisper-dictation-status"
+LAST_TEXT_FILE = "/tmp/whisper-dictation-last"
 STATUS_LOADING = '<span color="#fabd2f">● LOAD</span>'
 STATUS_REC = '<span color="#fb4934">● REC</span>'
 IDLE_TIMEOUT = 15 * 60  # 15 minutes
@@ -123,7 +124,13 @@ def main():
         log.info(f"Transcribed in {time.monotonic()-t0:.2f}s")
 
         if text:
-            type_text(text + " ")
+            text_out = text + " "
+            try:
+                with open(LAST_TEXT_FILE, "w") as f:
+                    f.write(text_out)
+            except OSError:
+                pass
+            type_text(text_out)
 
     def toggle(sig, frame):
         nonlocal recording
