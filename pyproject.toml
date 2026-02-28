@@ -14,6 +14,9 @@ whisper-dictation-daemon = "whisper_dictation.daemon:main"
 whisper-dictation-toggle = "whisper_dictation.toggle:main"
 whisper-dictation-repeat = "whisper_dictation.repeat:main"
 
+[dependency-groups]
+dev = ["pytest"]
+
 [tool.setuptools]
 packages = ["whisper_dictation"]
 
