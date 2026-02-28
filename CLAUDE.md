@@ -54,6 +54,8 @@ pkill -f whisper-dictation-daemon
 - `/tmp/whisper-dictation-daemon.pid` - Daemon PID
 - `/tmp/whisper-dictation-status` - Status bar output (Pango markup)
 - `/tmp/whisper-dictation-last` - Last transcribed text (for repeat)
+- `~/.config/whisper-dictation/config.toml` - Optional config (paste methods, history)
+- History file path from config (JSONL, opt-in)
 
 ## Dependencies
 

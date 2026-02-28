@@ -2,11 +2,15 @@
 """Whisper daemon - keeps model loaded, toggles recording on signal."""
 
 import atexit
+import json
 import logging
 import os
 import signal
 import sys
 import time
+import tomllib
+from datetime import datetime, timezone
+from pathlib import Path
 
 from .text_output import type_text
 
@@ -29,6 +33,7 @@ SAMPLE_RATE = 16000
 PID_FILE = "/tmp/whisper-dictation-daemon.pid"
 STATUS_FILE = "/tmp/whisper-dictation-status"
 LAST_TEXT_FILE = "/tmp/whisper-dictation-last"
+CONFIG_PATH = Path.home() / ".config" / "whisper-dictation" / "config.toml"
 STATUS_LOADING = '<span color="#fabd2f">● LOAD</span>'
 STATUS_REC = '<span color="#fb4934">● REC</span>'
 IDLE_TIMEOUT = 15 * 60  # 15 minutes
@@ -60,6 +65,17 @@ def main():
     except OSError as e:
         log.error(f"Cannot write to /tmp: {e}")
         sys.exit(1)
+
+    # Load config
+    history_file = None
+    try:
+        with open(CONFIG_PATH, "rb") as f:
+            config = tomllib.load(f)
+        hf = config.get("history_file")
+        if hf:
+            history_file = Path(hf).expanduser()
+    except (FileNotFoundError, tomllib.TOMLDecodeError):
+        pass
 
     # Heavy imports
     import huggingface_hub.errors
@@ -130,6 +146,17 @@ def main():
                     f.write(text_out)
             except OSError:
                 pass
+            if history_file:
+                try:
+                    history_file.parent.mkdir(parents=True, exist_ok=True)
+                    with open(history_file, "a") as f:
+                        json.dump({
+                            "ts": datetime.now(timezone.utc).isoformat(),
+                            "text": text,
+                        }, f)
+                        f.write("\n")
+                except OSError:
+                    pass
             type_text(text_out)
 
     def toggle(sig, frame):
