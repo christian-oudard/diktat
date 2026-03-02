@@ -68,14 +68,18 @@ def main():
 
     # Load config
     history_file = None
+    vocabulary_hints = None
     try:
         with open(CONFIG_PATH, "rb") as f:
             config = tomllib.load(f)
         hf = config.get("history_file")
         if hf:
             history_file = Path(hf).expanduser()
+        vocabulary_hints = config.get("vocabulary_hints")
     except (FileNotFoundError, tomllib.TOMLDecodeError):
         pass
+    if vocabulary_hints:
+        log.info(f"Vocabulary hints: {vocabulary_hints.strip()}")
 
     # Heavy imports
     import huggingface_hub.errors
@@ -86,7 +90,9 @@ def main():
     log.info(f"Loading {MODEL}...")
     try:
         model = WhisperModel(MODEL, device="cuda", compute_type="float16", local_files_only=True)
-    except (RuntimeError, ValueError):
+        # Verify CUDA inference works (cublas may be missing even if model loads)
+        model.model.encode(np.zeros((80, 100), dtype=np.float32))
+    except (RuntimeError, ValueError, OSError):
         log.info("CUDA not available, using CPU")
         model = WhisperModel(MODEL, device="cpu", compute_type="int8", local_files_only=True)
     except huggingface_hub.errors.LocalEntryNotFoundError:
@@ -135,7 +141,7 @@ def main():
         log.info(f"Transcribing {len(audio)/SAMPLE_RATE:.1f}s...")
 
         t0 = time.monotonic()
-        segments, _ = model.transcribe(audio, language="en", beam_size=5, vad_filter=True)
+        segments, _ = model.transcribe(audio, language="en", beam_size=5, vad_filter=True, initial_prompt=vocabulary_hints)
         text = "".join(s.text for s in segments).strip()
         log.info(f"Transcribed in {time.monotonic()-t0:.2f}s")
 
