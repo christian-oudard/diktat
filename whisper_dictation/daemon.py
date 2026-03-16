@@ -36,6 +36,7 @@ LAST_TEXT_FILE = "/tmp/whisper-dictation-last"
 CONFIG_PATH = Path.home() / ".config" / "whisper-dictation" / "config.toml"
 STATUS_LOADING = '<span color="#fabd2f">● LOAD</span>'
 STATUS_REC = '<span color="#fb4934">● REC</span>'
+STATUS_TX = '<span color="#458588">● TX</span>'
 IDLE_TIMEOUT = 15 * 60  # 15 minutes
 
 
@@ -138,12 +139,14 @@ def main():
         nonlocal recording
         recording = False
         stream.stop()
-        set_status("")
-        signal.alarm(IDLE_TIMEOUT)  # Start idle timeout
 
         if not audio_chunks:
+            set_status("")
+            signal.alarm(IDLE_TIMEOUT)
             log.info("No audio.")
             return
+
+        set_status(STATUS_TX)
 
         audio = np.concatenate(audio_chunks)
         log.info(f"Transcribing {len(audio)/SAMPLE_RATE:.1f}s...")
@@ -172,6 +175,9 @@ def main():
                 except OSError:
                     pass
             type_text(text_out)
+
+        set_status("")
+        signal.alarm(IDLE_TIMEOUT)
 
     def toggle(sig, frame):
         nonlocal recording
