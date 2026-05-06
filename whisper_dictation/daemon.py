@@ -28,7 +28,7 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-MODEL = "tiny.en"
+DEFAULT_BACKEND = "moonshine-onnx:base"
 SAMPLE_RATE = 16000
 PID_FILE = "/tmp/whisper-dictation-daemon.pid"
 STATUS_FILE = "/tmp/whisper-dictation-status"
@@ -70,6 +70,7 @@ def main():
     # Load config
     history_file = None
     vocabulary_hints = None
+    backend_spec = DEFAULT_BACKEND
     try:
         with open(CONFIG_PATH, "rb") as f:
             config = tomllib.load(f)
@@ -77,37 +78,30 @@ def main():
         if hf:
             history_file = Path(hf).expanduser()
         vocabulary_hints = config.get("vocabulary_hints")
+        backend_spec = config.get("backend", DEFAULT_BACKEND)
     except (FileNotFoundError, tomllib.TOMLDecodeError):
         pass
     if vocabulary_hints:
         log.info(f"Vocabulary hints: {vocabulary_hints.strip()}")
 
     # Heavy imports
-    import huggingface_hub
-    import huggingface_hub.errors
     import numpy as np
     import sounddevice as sd
-    from faster_whisper import WhisperModel
+    from .backends import FasterWhisper, MoonshineOnnx
 
-    log.info(f"Loading {MODEL}...")
-    # Ensure model is cached locally (downloads on first run)
-    local_only = True
-    try:
-        huggingface_hub.snapshot_download(f"Systran/faster-whisper-{MODEL}", local_files_only=True)
-    except huggingface_hub.errors.LocalEntryNotFoundError:
-        log.info("Model not cached, downloading...")
-        try:
-            huggingface_hub.snapshot_download(f"Systran/faster-whisper-{MODEL}")
-        except Exception as e:
-            log.error(f"Failed to download model: {e}")
+    log.info(f"Loading {backend_spec}...")
+    kind, _, model_name = backend_spec.partition(":")
+    if not model_name:
+        log.error(f"backend spec missing model: {backend_spec!r}")
+        sys.exit(1)
+    match kind:
+        case "moonshine-onnx":
+            backend = MoonshineOnnx(model_name, vocabulary_hints=vocabulary_hints)
+        case "faster-whisper":
+            backend = FasterWhisper(model_name, vocabulary_hints=vocabulary_hints)
+        case _:
+            log.error(f"unknown backend kind: {kind!r}")
             sys.exit(1)
-    try:
-        model = WhisperModel(MODEL, device="cuda", compute_type="float16", local_files_only=local_only)
-        # Verify CUDA inference works (cublas may be missing even if model loads)
-        model.model.encode(np.zeros((80, 100), dtype=np.float32))
-    except (RuntimeError, ValueError, OSError):
-        log.info("CUDA not available, using CPU")
-        model = WhisperModel(MODEL, device="cpu", compute_type="int8", local_files_only=local_only)
     log.info("Model loaded.")
 
     # State
@@ -152,8 +146,7 @@ def main():
         log.info(f"Transcribing {len(audio)/SAMPLE_RATE:.1f}s...")
 
         t0 = time.monotonic()
-        segments, _ = model.transcribe(audio, language="en", beam_size=5, vad_filter=True, initial_prompt=vocabulary_hints)
-        text = "".join(s.text for s in segments).strip()
+        text = backend.transcribe(audio)
         log.info(f"Transcribed in {time.monotonic()-t0:.2f}s")
 
         if text:
