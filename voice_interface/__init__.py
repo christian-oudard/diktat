@@ -1,36 +1,18 @@
-"""Full voice interface: model of a 4-piece voice agent stack.
+"""Full voice interface: minimal model of a voice-driven agent stack.
 
-Pieces (per the design sketch):
-    User <-> VoiceLayer <-> Translator <-> Executor <-> MCP servers
+The whole design boils down to one loop:
 
-Every external boundary (audio I/O, LLM calls, MCP tools) is behind an
-interface so the same orchestrator can run with mocks (these tests) or with
-real implementations (OpenAI Realtime, Haiku, Claude Code CLI, real MCP
-servers) by swapping a single component.
+    voice text  ->  LLM with tools  ->  tool fires  ->  side effect
+
+Intelligence (intent, cleanup, anaphora, summarization) lives in the LLM.
+Python only owns the mechanical pieces:
+
+    minimal.py      -- the Tool/step/LLM Protocol skeleton
+    mcp_servers.py  -- in-process tool surfaces (Log, SMS) standing in for MCP
+    harness.py      -- run a scenario through any LLM-shaped callable
+    scenarios.py    -- scenarios as data, the brief given to a sub-agent
 """
 
-from voice_interface.protocol import (
-    Clarify,
-    Conversation,
-    Delegate,
-    Direct,
-    ExecutorRequest,
-    ExecutorResponse,
-    ToolCall,
-    ToolResult,
-    ToolSpec,
-    Utterance,
-)
+from voice_interface.protocol import ToolCall, ToolResult, ToolSpec
 
-__all__ = [
-    "Clarify",
-    "Conversation",
-    "Delegate",
-    "Direct",
-    "ExecutorRequest",
-    "ExecutorResponse",
-    "ToolCall",
-    "ToolResult",
-    "ToolSpec",
-    "Utterance",
-]
+__all__ = ["ToolCall", "ToolResult", "ToolSpec"]

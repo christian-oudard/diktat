@@ -2,12 +2,7 @@
 
 import pytest
 
-from voice_interface.mcp_servers import (
-    BrowserServer,
-    FakePage,
-    LogServer,
-    SMSServer,
-)
+from voice_interface.mcp_servers import LogServer, SMSServer
 
 
 class TestLogServer:
@@ -91,28 +86,3 @@ class TestSMSServer:
         assert r.ok and r.data["number"] == "+15555550100"
 
 
-class TestBrowserServer:
-    def test_navigate_and_read(self):
-        page = FakePage(url="https://shop", title="Shop", body="Welcome")
-        b = BrowserServer({"https://shop": page})
-        assert b.call_tool("navigate", {"url": "https://shop"}).ok
-        r = b.call_tool("read", {})
-        assert r.ok and r.data["title"] == "Shop"
-
-    def test_submit_records_submission(self):
-        page = FakePage(
-            url="https://shop", title="Shop", body="",
-            forms={"buy": {"item": "string", "qty": "int"}},
-        )
-        b = BrowserServer({"https://shop": page})
-        b.call_tool("navigate", {"url": "https://shop"})
-        r = b.call_tool("submit", {"form": "buy", "fields": {"item": "milk", "qty": 1}})
-        assert r.ok
-        assert b.submissions == [
-            {"url": "https://shop", "form": "buy", "fields": {"item": "milk", "qty": 1}}
-        ]
-
-    def test_navigate_to_unknown_url_fails(self):
-        b = BrowserServer({})
-        r = b.call_tool("navigate", {"url": "https://nope"})
-        assert not r.ok and "no such page" in r.error
