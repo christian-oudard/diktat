@@ -20,7 +20,7 @@ whisper-dictation-vocab = "whisper_dictation.vocab:main"
 dev = ["pytest"]
 
 [tool.setuptools]
-packages = ["whisper_dictation"]
+packages = ["whisper_dictation", "voice_interface"]
 
 [tool.uv]
 package = true
