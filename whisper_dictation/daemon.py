@@ -57,6 +57,11 @@ def cleanup():
 
 
 def main():
+    if "--version" in sys.argv:
+        from . import __version__
+        print(__version__)
+        return
+
     atexit.register(cleanup)
     # Write PID and show loading status before heavy imports
     try:
