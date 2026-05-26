@@ -58,8 +58,13 @@ def cleanup():
 
 def main():
     if "--version" in sys.argv:
-        from . import __version__
-        print(__version__)
+        from . import __commit__, __commit_source__, __content_hash__
+        print(f"commit:        {__commit__}  (source: {__commit_source__})")
+        print(f"content hash:  {__content_hash__}")
+        return
+    if "--identify-commit" in sys.argv:
+        from .identify import identify_commit
+        identify_commit()
         return
 
     atexit.register(cleanup)
