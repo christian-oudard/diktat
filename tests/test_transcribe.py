@@ -3,14 +3,14 @@
 import shutil
 import subprocess
 import wave
-from pathlib import Path
 
+import huggingface_hub
+import huggingface_hub.errors
 import numpy as np
 import pytest
 from faster_whisper import WhisperModel
 
 SAMPLE_RATE = 16000
-FIXTURES = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture(scope="module")
@@ -20,6 +20,23 @@ def model():
         return WhisperModel("tiny.en", device="cuda", compute_type="float16")
     except (RuntimeError, ValueError):
         return WhisperModel("tiny.en", device="cpu", compute_type="int8")
+
+
+@pytest.fixture(scope="module")
+def piper_voice():
+    """Path to a piper-tts ONNX voice, fetched from HuggingFace on first use."""
+    if not shutil.which("piper"):
+        pytest.skip("piper not available")
+    repo = "rhasspy/piper-voices"
+    onnx = "en/en_US/amy/medium/en_US-amy-medium.onnx"
+    cfg = onnx + ".json"
+    try:
+        path = huggingface_hub.hf_hub_download(repo, onnx, local_files_only=True)
+        huggingface_hub.hf_hub_download(repo, cfg, local_files_only=True)
+    except huggingface_hub.errors.LocalEntryNotFoundError:
+        path = huggingface_hub.hf_hub_download(repo, onnx)
+        huggingface_hub.hf_hub_download(repo, cfg)
+    return path
 
 
 def transcribe(model, audio: np.ndarray) -> str:
@@ -61,25 +78,16 @@ class TestTranscription:
         noise = rng.standard_normal(SAMPLE_RATE * 2).astype(np.float32) * 0.01
         assert transcribe(model, noise) == ""
 
-    def test_hello_world(self, model):
-        """Transcribe pre-generated espeak-ng 'hello world' fixture."""
-        audio = load_wav(str(FIXTURES / "hello.wav"))
-        text = transcribe(model, audio).lower()
-        assert "hello" in text
-
-    @pytest.mark.skipif(
-        not shutil.which("espeak-ng"),
-        reason="espeak-ng not available",
-    )
-    def test_tts_transcription(self, model, tmp_path):
-        """Generate speech with espeak-ng, verify whisper transcribes it."""
-        wav_path = str(tmp_path / "speech.wav")
+    def test_tts_transcription(self, model, piper_voice, tmp_path):
+        """Synthesize speech with piper-tts, verify whisper transcribes it."""
+        wav_path = tmp_path / "speech.wav"
         subprocess.run(
-            ["espeak-ng", "--stdout", "-s", "150", "testing one two three"],
-            capture_output=True, check=True,
-            stdout=open(wav_path, "wb"),
+            ["piper", "-m", piper_voice, "-f", str(wav_path)],
+            input=b"testing one two three",
+            check=True,
+            capture_output=True,
         )
-        audio = load_wav(wav_path)
+        audio = load_wav(str(wav_path))
         text = transcribe(model, audio).lower()
         assert "test" in text or "one" in text or "two" in text
 
