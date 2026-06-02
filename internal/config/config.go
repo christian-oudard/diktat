@@ -1,0 +1,37 @@
+// Package config reads ~/.config/whisper-dictation/config.toml.
+package config
+
+import (
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+
+	"github.com/BurntSushi/toml"
+)
+
+// Config is the on-disk schema. All fields are optional.
+type Config struct {
+	PasteMethods map[string]string `toml:"paste_methods"`
+	HistoryFile  string            `toml:"history_file"`
+}
+
+// DefaultPath returns the standard config location.
+func DefaultPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "whisper-dictation", "config.toml")
+}
+
+// Load parses the config file at path. A missing file returns a zero Config
+// and no error, so callers can ignore the absence of user config.
+func Load(path string) (*Config, error) {
+	var c Config
+	_, err := toml.DecodeFile(path, &c)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return &c, nil
+		}
+		return nil, err
+	}
+	return &c, nil
+}

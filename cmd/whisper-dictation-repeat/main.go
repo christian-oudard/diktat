@@ -1,11 +1,29 @@
+// Repeat: re-type the last transcription.
 package main
 
 import (
-	"fmt"
+	"log"
 	"os"
+
+	"github.com/christian-oudard/whisper_dictation/internal/config"
+	"github.com/christian-oudard/whisper_dictation/internal/output"
 )
 
+const lastTextFile = "/tmp/whisper-dictation-last"
+
 func main() {
-	fmt.Println("whisper-dictation-repeat: TODO")
-	os.Exit(0)
+	raw, err := os.ReadFile(lastTextFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return
+		}
+		log.Fatalf("read last text: %v", err)
+	}
+	cfg, err := config.Load(config.DefaultPath())
+	if err != nil {
+		cfg = &config.Config{}
+	}
+	if err := output.Type(string(raw), cfg.PasteMethods); err != nil {
+		log.Fatalf("type: %v", err)
+	}
 }

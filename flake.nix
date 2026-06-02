@@ -29,10 +29,17 @@
         cp ${tokenizerJson} $out/tokenizer.json
       '';
 
-      runtimeDeps = pkgs.lib.makeBinPath [
+      runtimeBin = pkgs.lib.makeBinPath [
         pkgs.wtype
         pkgs.wl-clipboard
         pkgs.sway
+      ];
+
+      # miniaudio dlopens these by SONAME at runtime.
+      audioLibs = pkgs.lib.makeLibraryPath [
+        pkgs.alsa-lib
+        pkgs.libpulseaudio
+        pkgs.pipewire
       ];
     in
     {
@@ -52,7 +59,8 @@
             wrapProgram "$bin" \
               --set ONNXRUNTIME_LIB ${pkgs.onnxruntime}/lib/libonnxruntime.so \
               --set MOONSHINE_MODEL_DIR ${models} \
-              --prefix PATH : ${runtimeDeps}
+              --prefix PATH : ${runtimeBin} \
+              --suffix LD_LIBRARY_PATH : ${audioLibs}
           done
         '';
       };
