@@ -1,6 +1,2 @@
-__pycache__/
-*.egg-info/
-.venv/
-.envrc
-build/
-whisper_dictation/_version.py
+/result
+/result-*

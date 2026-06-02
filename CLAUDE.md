@@ -1,65 +1,49 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Overview
 
-Whisper-based voice dictation for Linux/Sway/Wayland. Uses faster-whisper with GPU acceleration for high-quality offline speech-to-text.
+Voice dictation for Linux/Sway/Wayland. Moonshine ONNX tiny model, CPU only.
+Go binaries built via nix `buildGoModule`. Models are bundled at build time
+via fetchurl in `flake.nix`.
 
-## Repository Structure
+## Layout
 
-- `whisper_dictation/` - Python package
-  - `daemon.py` - Daemon that keeps Whisper model loaded in VRAM
-  - `toggle.py` - Toggle command that starts daemon or toggles recording
-  - `repeat.py` - Re-type last dictation result
-  - `text_output.py` - Text typing via wtype with clipboard paste for known apps
-- `pyproject.toml` - Package definition with entry points
+- `cmd/whisper-dictation-daemon/` - daemon: keeps model loaded, toggles
+  recording on SIGUSR1, transcribes, types via wtype.
+- `cmd/whisper-dictation-toggle/` - sends SIGUSR1, starts daemon if absent.
+- `cmd/whisper-dictation-repeat/` - re-types last transcription.
+- `internal/` - shared packages: asr, audio, config, output.
 
-## Key Commands
+## Runtime contract
 
-Install:
-```bash
-uv tool install .
+The wrapped binaries see these environment variables (set by the nix wrapper):
+
+- `ONNXRUNTIME_LIB` - absolute path to libonnxruntime.so
+- `MOONSHINE_MODEL_DIR` - directory with `encoder.onnx`, `decoder.onnx`,
+  `tokenizer.json`
+
+External CLIs expected on PATH: `wtype`, `wl-copy`, `wl-paste`, `swaymsg`.
+The wrapper prepends them.
+
+## IPC files (in `/tmp`)
+
+- `whisper-dictation-daemon.pid` - daemon PID
+- `whisper-dictation-status` - Pango markup status string
+- `whisper-dictation-last` - last transcribed text
+- `whisper-dictation-daemon.log` - log
+
+## Build
+
+```
+nix build
+./result/bin/whisper-dictation-daemon
 ```
 
-Toggle recording (bind to key):
-```bash
-whisper-dictation-toggle
-```
+## Config
 
-Repeat last dictation (bind to key):
-```bash
-whisper-dictation-repeat
-```
+`~/.config/whisper-dictation/config.toml` (optional). Keys:
 
-Stop daemon:
-```bash
-pkill -f whisper-dictation-daemon
-```
+- `paste_methods` - map of sway app_id to paste key combo (`C-v`, `C-S-v`)
+- `history_file` - JSONL append target for each transcription
 
-## Architecture
-
-**Daemon pattern** for instant recording:
-
-1. `whisper-dictation-toggle` starts `whisper-dictation-daemon` if not running
-2. Daemon loads model (shows yellow "LOAD" status)
-3. Daemon auto-starts recording (shows red "REC" status)
-4. `whisper-dictation-toggle` sends SIGUSR1 to toggle recording on/off
-5. On stop: daemon transcribes audio, types result via wtype, saves to last-text file
-6. Daemon stays running with model in VRAM for instant subsequent recordings
-7. Daemon auto-shuts down after 15 minutes idle
-8. `whisper-dictation-repeat` re-types the last transcription
-
-**Files:**
-- `/tmp/whisper-dictation-daemon.pid` - Daemon PID
-- `/tmp/whisper-dictation-status` - Status bar output (Pango markup)
-- `/tmp/whisper-dictation-last` - Last transcribed text (for repeat)
-- `~/.config/whisper-dictation/config.toml` - Optional config (paste methods, history, vocabulary_hints)
-- History file path from config (JSONL, opt-in)
-
-## Dependencies
-
-- `faster-whisper` - Whisper implementation with CTranslate2
-- `sounddevice` - Audio recording
-- `wtype` - Wayland input simulation
-- NVIDIA GPU with CUDA for acceleration
+Vocabulary hints are not supported by Moonshine; the config key is ignored.

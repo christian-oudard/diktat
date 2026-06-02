@@ -1,56 +1,60 @@
 {
-  description = "Voice dictation with faster-whisper and Moonshine ONNX backends";
+  description = "Voice dictation with Moonshine ONNX";
 
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    pyproject-nix = {
-      url = "github:pyproject-nix/pyproject.nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-    uv2nix = {
-      url = "github:pyproject-nix/uv2nix";
-      inputs.pyproject-nix.follows = "pyproject-nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-    pyproject-build-systems = {
-      url = "github:pyproject-nix/build-system-pkgs";
-      inputs.pyproject-nix.follows = "pyproject-nix";
-      inputs.uv2nix.follows = "uv2nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-  };
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
   outputs =
-    {
-      nixpkgs,
-      pyproject-nix,
-      uv2nix,
-      pyproject-build-systems,
-      ...
-    }:
+    { self, nixpkgs }:
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
-      workspace = uv2nix.lib.workspace.loadWorkspace { workspaceRoot = ./.; };
-      overlay = workspace.mkPyprojectOverlay { sourcePreference = "wheel"; };
-      pyprojectOverrides = final: prev: {
-        numba = prev.numba.overrideAttrs (old: {
-          buildInputs = (old.buildInputs or [ ]) ++ [ pkgs.onetbb ];
-        });
+
+      encoderModel = pkgs.fetchurl {
+        url = "https://huggingface.co/UsefulSensors/moonshine/resolve/main/onnx/merged/tiny/float/encoder_model.onnx";
+        hash = "sha256-y79YD3A7KvITfg9tFM2H8xzGe9hYv9hxVAOpSJmC0aU=";
       };
-      pythonSet =
-        (pkgs.callPackage pyproject-nix.build.packages { python = pkgs.python3; }).overrideScope
-          (nixpkgs.lib.composeManyExtensions [
-            pyproject-build-systems.overlays.wheel
-            overlay
-            pyprojectOverrides
-          ]);
-      inherit (pkgs.callPackages pyproject-nix.build.util { }) mkApplication;
+      decoderModel = pkgs.fetchurl {
+        url = "https://huggingface.co/UsefulSensors/moonshine/resolve/main/onnx/merged/tiny/float/decoder_model_merged.onnx";
+        hash = "sha256-QTHO8AtilC6c3vaREB8sx9u82CjXHu6MbEbCj9BR1ss=";
+      };
+      tokenizerJson = pkgs.fetchurl {
+        url = "https://huggingface.co/UsefulSensors/moonshine-tiny/resolve/main/tokenizer.json";
+        hash = "sha256-ZXl5NDi8T7r/+s9pkWn/U+N2nFoKD15xze6IU+gTDes=";
+      };
+
+      models = pkgs.runCommand "moonshine-tiny-models" { } ''
+        mkdir -p $out
+        cp ${encoderModel} $out/encoder.onnx
+        cp ${decoderModel} $out/decoder.onnx
+        cp ${tokenizerJson} $out/tokenizer.json
+      '';
+
+      runtimeDeps = pkgs.lib.makeBinPath [
+        pkgs.wtype
+        pkgs.wl-clipboard
+        pkgs.sway
+      ];
     in
     {
-      packages.${system}.default = mkApplication {
-        venv = pythonSet.mkVirtualEnv "whisper-dictation-env" workspace.deps.default;
-        package = pythonSet.whisper-dictation;
+      packages.${system}.default = pkgs.buildGoModule {
+        pname = "whisper-dictation";
+        version = "0.2.0";
+        src = ./.;
+        vendorHash = null;
+        subPackages = [
+          "cmd/whisper-dictation-daemon"
+          "cmd/whisper-dictation-toggle"
+          "cmd/whisper-dictation-repeat"
+        ];
+        nativeBuildInputs = [ pkgs.makeWrapper ];
+        postInstall = ''
+          for bin in $out/bin/*; do
+            wrapProgram "$bin" \
+              --set ONNXRUNTIME_LIB ${pkgs.onnxruntime}/lib/libonnxruntime.so \
+              --set MOONSHINE_MODEL_DIR ${models} \
+              --prefix PATH : ${runtimeDeps}
+          done
+        '';
       };
     };
 }
