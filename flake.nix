@@ -67,18 +67,21 @@
         cp ${tokenizerJson} $out/tokenizer.json
       '';
 
-      runtimeBin = pkgs.lib.makeBinPath [
+      # External CLIs the daemon shells out to.
+      runtimeDeps = [
         pkgs.wtype
         pkgs.wl-clipboard
         pkgs.sway
       ];
+      runtimeBin = pkgs.lib.makeBinPath runtimeDeps;
 
       # miniaudio dlopens these by SONAME at runtime.
-      audioLibs = pkgs.lib.makeLibraryPath [
+      audioInputs = [
         pkgs.alsa-lib
         pkgs.libpulseaudio
         pkgs.pipewire
       ];
+      audioLibs = pkgs.lib.makeLibraryPath audioInputs;
     in
     {
       packages.${system}.default = pkgs.buildGoModule {
@@ -101,6 +104,16 @@
               --suffix LD_LIBRARY_PATH : ${audioLibs}
           done
         '';
+      };
+
+      # `go run`/`go build`/`go test` with the same runtime env the wrapper
+      # sets, so the binaries work without going through `nix build`.
+      devShells.${system}.default = pkgs.mkShell {
+        packages = [ pkgs.go ] ++ runtimeDeps;
+        buildInputs = audioInputs;
+        ONNXRUNTIME_LIB = "${pkgs.onnxruntime}/lib/libonnxruntime.so";
+        MOONSHINE_MODEL_DIR = models;
+        LD_LIBRARY_PATH = audioLibs;
       };
     };
 }
