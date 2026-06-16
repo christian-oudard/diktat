@@ -9,15 +9,53 @@
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
 
-      encoderModel = pkgs.fetchurl {
+      # HuggingFace's Xet CDN drops large transfers mid-stream, and a VPN
+      # with too large an MTU makes it fail every few hundred KB. Resume
+      # across interruptions so each chunk that arrives is kept, instead of
+      # restarting from zero like fetchurl does.
+      fetchModel =
+        {
+          name,
+          url,
+          hash,
+        }:
+        pkgs.runCommand name
+          {
+            outputHashMode = "flat";
+            outputHashAlgo = "sha256";
+            outputHash = hash;
+            nativeBuildInputs = [ pkgs.curl ];
+            SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+          }
+          ''
+            touch model
+            for attempt in $(seq 1 200); do
+              if curl --location --fail --continue-at - \
+                   --retry 3 --retry-all-errors \
+                   --speed-limit 1024 --speed-time 30 \
+                   --output model "${url}"; then
+                mv model $out
+                exit 0
+              fi
+              echo "attempt $attempt stopped at $(stat -c%s model) bytes, resuming" >&2
+              sleep 1
+            done
+            echo "download did not complete after 200 attempts" >&2
+            exit 1
+          '';
+
+      encoderModel = fetchModel {
+        name = "encoder_model.onnx";
         url = "https://huggingface.co/UsefulSensors/moonshine/resolve/main/onnx/merged/tiny/float/encoder_model.onnx";
         hash = "sha256-y79YD3A7KvITfg9tFM2H8xzGe9hYv9hxVAOpSJmC0aU=";
       };
-      decoderModel = pkgs.fetchurl {
+      decoderModel = fetchModel {
+        name = "decoder_model_merged.onnx";
         url = "https://huggingface.co/UsefulSensors/moonshine/resolve/main/onnx/merged/tiny/float/decoder_model_merged.onnx";
         hash = "sha256-QTHO8AtilC6c3vaREB8sx9u82CjXHu6MbEbCj9BR1ss=";
       };
-      tokenizerJson = pkgs.fetchurl {
+      tokenizerJson = fetchModel {
+        name = "tokenizer.json";
         url = "https://huggingface.co/UsefulSensors/moonshine-tiny/resolve/main/tokenizer.json";
         hash = "sha256-ZXl5NDi8T7r/+s9pkWn/U+N2nFoKD15xze6IU+gTDes=";
       };
