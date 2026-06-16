@@ -14,17 +14,17 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/christian-oudard/whisper_dictation/internal/asr"
-	"github.com/christian-oudard/whisper_dictation/internal/audio"
-	"github.com/christian-oudard/whisper_dictation/internal/config"
-	"github.com/christian-oudard/whisper_dictation/internal/output"
+	"github.com/christian-oudard/diktat/internal/asr"
+	"github.com/christian-oudard/diktat/internal/audio"
+	"github.com/christian-oudard/diktat/internal/config"
+	"github.com/christian-oudard/diktat/internal/output"
 )
 
 const (
-	pidFile      = "/tmp/whisper-dictation-daemon.pid"
-	statusFile   = "/tmp/whisper-dictation-status"
-	lastTextFile = "/tmp/whisper-dictation-last"
-	logFile      = "/tmp/whisper-dictation-daemon.log"
+	pidFile      = "/tmp/diktat-daemon.pid"
+	statusFile   = "/tmp/diktat-status"
+	lastTextFile = "/tmp/diktat-last"
+	logFile      = "/tmp/diktat-daemon.log"
 
 	statusLoad = `<span color="#fabd2f">● LOAD</span>`
 	statusRec  = `<span color="#fb4934">● REC</span>`

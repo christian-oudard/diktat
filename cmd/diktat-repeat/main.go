@@ -5,11 +5,11 @@ import (
 	"log"
 	"os"
 
-	"github.com/christian-oudard/whisper_dictation/internal/config"
-	"github.com/christian-oudard/whisper_dictation/internal/output"
+	"github.com/christian-oudard/diktat/internal/config"
+	"github.com/christian-oudard/diktat/internal/output"
 )
 
-const lastTextFile = "/tmp/whisper-dictation-last"
+const lastTextFile = "/tmp/diktat-last"
 
 func main() {
 	raw, err := os.ReadFile(lastTextFile)

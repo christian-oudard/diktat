@@ -85,14 +85,14 @@
     in
     {
       packages.${system}.default = pkgs.buildGoModule {
-        pname = "whisper-dictation";
+        pname = "diktat";
         version = "0.2.0";
         src = ./.;
         vendorHash = null;
         subPackages = [
-          "cmd/whisper-dictation-daemon"
-          "cmd/whisper-dictation-toggle"
-          "cmd/whisper-dictation-repeat"
+          "cmd/diktat-daemon"
+          "cmd/diktat-toggle"
+          "cmd/diktat-repeat"
         ];
         nativeBuildInputs = [ pkgs.makeWrapper ];
         postInstall = ''

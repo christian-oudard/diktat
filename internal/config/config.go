@@ -1,4 +1,4 @@
-// Package config reads ~/.config/whisper-dictation/config.toml.
+// Package config reads ~/.config/diktat/config.toml.
 package config
 
 import (
@@ -19,7 +19,7 @@ type Config struct {
 // DefaultPath returns the standard config location.
 func DefaultPath() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "whisper-dictation", "config.toml")
+	return filepath.Join(home, ".config", "diktat", "config.toml")
 }
 
 // Load parses the config file at path. A missing file returns a zero Config

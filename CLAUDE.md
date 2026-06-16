@@ -3,15 +3,15 @@
 ## Overview
 
 Voice dictation for Linux/Sway/Wayland. Moonshine ONNX tiny model, CPU only.
-Go binaries built via nix `buildGoModule`. Models are bundled at build time
-via fetchurl in `flake.nix`.
+Go binaries built via nix `buildGoModule`. Models are fetched at build
+time by a resumable curl download in `flake.nix`.
 
 ## Layout
 
-- `cmd/whisper-dictation-daemon/` - daemon: keeps model loaded, toggles
+- `cmd/diktat-daemon/` - daemon: keeps model loaded, toggles
   recording on SIGUSR1, transcribes, types via wtype.
-- `cmd/whisper-dictation-toggle/` - sends SIGUSR1, starts daemon if absent.
-- `cmd/whisper-dictation-repeat/` - re-types last transcription.
+- `cmd/diktat-toggle/` - sends SIGUSR1, starts daemon if absent.
+- `cmd/diktat-repeat/` - re-types last transcription.
 - `internal/` - shared packages: asr, audio, config, output.
 
 ## Runtime contract
@@ -27,21 +27,21 @@ The wrapper prepends them.
 
 ## IPC files (in `/tmp`)
 
-- `whisper-dictation-daemon.pid` - daemon PID
-- `whisper-dictation-status` - Pango markup status string
-- `whisper-dictation-last` - last transcribed text
-- `whisper-dictation-daemon.log` - log
+- `diktat-daemon.pid` - daemon PID
+- `diktat-status` - Pango markup status string
+- `diktat-last` - last transcribed text
+- `diktat-daemon.log` - log
 
 ## Build
 
 ```
 nix build
-./result/bin/whisper-dictation-daemon
+./result/bin/diktat-daemon
 ```
 
 ## Config
 
-`~/.config/whisper-dictation/config.toml` (optional). Keys:
+`~/.config/diktat/config.toml` (optional). Keys:
 
 - `paste_methods` - map of sway app_id to paste key combo (`C-v`, `C-S-v`)
 - `history_file` - JSONL append target for each transcription

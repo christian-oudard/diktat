@@ -1,4 +1,4 @@
-module github.com/christian-oudard/whisper_dictation
+module github.com/christian-oudard/diktat
 
 go 1.23
 

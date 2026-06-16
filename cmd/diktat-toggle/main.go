@@ -10,7 +10,7 @@ import (
 	"syscall"
 )
 
-const pidFile = "/tmp/whisper-dictation-daemon.pid"
+const pidFile = "/tmp/diktat-daemon.pid"
 
 func main() {
 	if pid := readPID(); pid != 0 {
@@ -19,7 +19,7 @@ func main() {
 		}
 	}
 	// No live daemon. Start one detached.
-	cmd := exec.Command("whisper-dictation-daemon")
+	cmd := exec.Command("diktat-daemon")
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
