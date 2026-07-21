@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -153,7 +154,9 @@ func (d *daemon) stopRecording() {
 	}
 
 	setStatus(statusTx)
-	log.Printf("Transcribing %.1fs...", float64(len(samples))/float64(audio.SampleRate))
+	peak, rms := levels(samples)
+	log.Printf("Transcribing %.1fs (peak %.3f rms %.4f)...",
+		float64(len(samples))/float64(audio.SampleRate), peak, rms)
 
 	t0 := time.Now()
 	text, err := d.model.Transcribe(samples)
@@ -163,7 +166,7 @@ func (d *daemon) stopRecording() {
 		d.idleTimer.Reset(idleTimeout)
 		return
 	}
-	log.Printf("Transcribed in %s", time.Since(t0))
+	log.Printf("Transcribed in %s: %q", time.Since(t0), text)
 
 	if text != "" {
 		out := text + " "
@@ -204,6 +207,23 @@ func (d *daemon) appendHistory(text string) {
 		"ts":   time.Now().UTC().Format(time.RFC3339Nano),
 		"text": text,
 	})
+}
+
+// levels returns the peak absolute amplitude and RMS of the samples, to
+// distinguish silent/low-gain captures from genuine speech in the log.
+func levels(samples []float32) (peak, rms float64) {
+	var sumSq float64
+	for _, s := range samples {
+		a := math.Abs(float64(s))
+		if a > peak {
+			peak = a
+		}
+		sumSq += float64(s) * float64(s)
+	}
+	if len(samples) > 0 {
+		rms = math.Sqrt(sumSq / float64(len(samples)))
+	}
+	return peak, rms
 }
 
 func setStatus(s string) {
