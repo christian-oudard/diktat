@@ -155,8 +155,9 @@ func (d *daemon) stopRecording() {
 
 	setStatus(statusTx)
 	peak, rms := levels(samples)
-	log.Printf("Transcribing %.1fs (peak %.3f rms %.4f)...",
-		float64(len(samples))/float64(audio.SampleRate), peak, rms)
+	gain := normalize(samples, rms)
+	log.Printf("Transcribing %.1fs (peak %.3f rms %.4f gain %.1fx)...",
+		float64(len(samples))/float64(audio.SampleRate), peak, rms, gain)
 
 	t0 := time.Now()
 	text, err := d.model.Transcribe(samples)
@@ -207,6 +208,38 @@ func (d *daemon) appendHistory(text string) {
 		"ts":   time.Now().UTC().Format(time.RFC3339Nano),
 		"text": text,
 	})
+}
+
+// normalize scales samples toward normTargetRMS, boosting quiet mic input
+// that Moonshine would otherwise transcribe as empty. RMS (not peak) is the
+// target because low-level speech is spiky: a single transient can leave the
+// peak high while the body of the speech stays too quiet to transcribe.
+// Captures below normFloorRMS are treated as silence and left untouched.
+// Gain is capped, and samples are clipped to [-1, 1]. Returns the gain.
+const (
+	normTargetRMS = 0.06
+	normFloorRMS  = 0.003
+	normMaxGain   = 40.0
+)
+
+func normalize(samples []float32, rms float64) float64 {
+	if rms < normFloorRMS {
+		return 1
+	}
+	gain := normTargetRMS / rms
+	if gain > normMaxGain {
+		gain = normMaxGain
+	}
+	for i := range samples {
+		v := float64(samples[i]) * gain
+		if v > 1 {
+			v = 1
+		} else if v < -1 {
+			v = -1
+		}
+		samples[i] = float32(v)
+	}
+	return gain
 }
 
 // levels returns the peak absolute amplitude and RMS of the samples, to
