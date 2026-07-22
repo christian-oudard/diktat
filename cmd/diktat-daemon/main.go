@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -154,8 +153,8 @@ func (d *daemon) stopRecording() {
 	}
 
 	setStatus(statusTx)
-	peak, rms := levels(samples)
-	gain := normalize(samples, rms)
+	peak, rms := audio.Levels(samples)
+	gain := audio.Normalize(samples, rms)
 	log.Printf("Transcribing %.1fs (peak %.3f rms %.4f gain %.1fx)...",
 		float64(len(samples))/float64(audio.SampleRate), peak, rms, gain)
 
@@ -208,55 +207,6 @@ func (d *daemon) appendHistory(text string) {
 		"ts":   time.Now().UTC().Format(time.RFC3339Nano),
 		"text": text,
 	})
-}
-
-// normalize scales samples toward normTargetRMS, boosting quiet mic input
-// that Moonshine would otherwise transcribe as empty. RMS (not peak) is the
-// target because low-level speech is spiky: a single transient can leave the
-// peak high while the body of the speech stays too quiet to transcribe.
-// Captures below normFloorRMS are treated as silence and left untouched.
-// Gain is capped, and samples are clipped to [-1, 1]. Returns the gain.
-const (
-	normTargetRMS = 0.06
-	normFloorRMS  = 0.003
-	normMaxGain   = 40.0
-)
-
-func normalize(samples []float32, rms float64) float64 {
-	if rms < normFloorRMS {
-		return 1
-	}
-	gain := normTargetRMS / rms
-	if gain > normMaxGain {
-		gain = normMaxGain
-	}
-	for i := range samples {
-		v := float64(samples[i]) * gain
-		if v > 1 {
-			v = 1
-		} else if v < -1 {
-			v = -1
-		}
-		samples[i] = float32(v)
-	}
-	return gain
-}
-
-// levels returns the peak absolute amplitude and RMS of the samples, to
-// distinguish silent/low-gain captures from genuine speech in the log.
-func levels(samples []float32) (peak, rms float64) {
-	var sumSq float64
-	for _, s := range samples {
-		a := math.Abs(float64(s))
-		if a > peak {
-			peak = a
-		}
-		sumSq += float64(s) * float64(s)
-	}
-	if len(samples) > 0 {
-		rms = math.Sqrt(sumSq / float64(len(samples)))
-	}
-	return peak, rms
 }
 
 func setStatus(s string) {
