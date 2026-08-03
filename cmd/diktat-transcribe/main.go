@@ -41,7 +41,7 @@ func main() {
 		peak, rms := audio.Levels(samples)
 		gain := 1.0
 		if !*raw {
-			gain = audio.Normalize(samples, rms)
+			gain = audio.Normalize(samples)
 		}
 		text, err := model.Transcribe(samples)
 		if err != nil {

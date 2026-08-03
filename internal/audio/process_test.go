@@ -14,34 +14,40 @@ func sine(amp float32, n int) []float32 {
 }
 
 func TestNormalizeBoostsQuietAudio(t *testing.T) {
-	samples := sine(0.01, SampleRate) // well below the transcription threshold
-	_, rms := Levels(samples)
-	gain := Normalize(samples, rms)
+	samples := sine(0.01, SampleRate) // well below a normal level
+	gain := Normalize(samples)
 	if gain <= 1 {
 		t.Fatalf("expected gain > 1 for quiet audio, got %.2f", gain)
 	}
-	_, rms2 := Levels(samples)
-	if math.Abs(rms2-normTargetRMS) > 0.005 {
-		t.Errorf("normalized rms = %.4f, want ~%.4f", rms2, normTargetRMS)
+	if peak, _ := Levels(samples); math.Abs(peak-normTargetPeak) > 0.05 {
+		t.Errorf("normalized peak = %.3f, want ~%.2f", peak, normTargetPeak)
 	}
 }
 
 func TestNormalizeLeavesSilenceUntouched(t *testing.T) {
 	samples := make([]float32, 1000) // all zeros
-	if gain := Normalize(samples, 0); gain != 1 {
+	if gain := Normalize(samples); gain != 1 {
 		t.Errorf("silence gain = %.2f, want 1", gain)
 	}
 }
 
-func TestNormalizeClipsSpikyAudio(t *testing.T) {
-	// Near-silent body with one loud transient: low rms, high peak.
-	samples := make([]float32, SampleRate)
-	for i := range samples {
-		samples[i] = 0.005
+func TestNormalizeLeavesLoudAudioUntouched(t *testing.T) {
+	samples := sine(0.95, SampleRate) // already above the target peak
+	if gain := Normalize(samples); gain != 1 {
+		t.Errorf("loud gain = %.2f, want 1", gain)
 	}
-	samples[0] = 0.9
-	_, rms := Levels(samples)
-	Normalize(samples, rms)
+}
+
+func TestNormalizeIgnoresTransients(t *testing.T) {
+	// Quiet speech-level body with one loud click: a true-peak normalizer
+	// would barely boost, but the percentile ignores the click and lifts the
+	// body substantially.
+	samples := sine(0.01, SampleRate)
+	samples[0] = 0.95
+	gain := Normalize(samples)
+	if gain < 10 {
+		t.Errorf("gain = %.1f, want the body boosted despite the click", gain)
+	}
 	if peak, _ := Levels(samples); peak > 1 {
 		t.Errorf("peak after normalize = %.3f, want <= 1", peak)
 	}

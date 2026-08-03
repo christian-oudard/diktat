@@ -154,7 +154,7 @@ func (d *daemon) stopRecording() {
 
 	setStatus(statusTx)
 	peak, rms := audio.Levels(samples)
-	gain := audio.Normalize(samples, rms)
+	gain := audio.Normalize(samples)
 	log.Printf("Transcribing %.1fs (peak %.3f rms %.4f gain %.1fx)...",
 		float64(len(samples))/float64(audio.SampleRate), peak, rms, gain)
 
