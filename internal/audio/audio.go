@@ -6,11 +6,20 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"time"
 
 	"github.com/gen2brain/malgo"
 )
 
 const SampleRate = 16000
+
+// MaxRecording bounds a single capture. The daemon stops recording on a
+// wall-clock timer, but the buffer is capped by sample count independently,
+// so a device that delivers frames faster than real time cannot grow it
+// without bound. Samples past the cap are dropped.
+const MaxRecording = 60 * time.Second
+
+const maxSamples = SampleRate * int(MaxRecording/time.Second)
 
 // Recorder owns a miniaudio context and capture device. Start begins
 // accumulating samples; Stop returns and clears them.
@@ -58,7 +67,7 @@ func NewRecorder() (*Recorder, error) {
 					peak = a
 				}
 			}
-			r.buf = append(r.buf, samples...)
+			r.appendSamples(samples)
 			r.level = float64(peak)
 		},
 	}
@@ -77,6 +86,19 @@ func NewRecorder() (*Recorder, error) {
 	}
 	r.device = dev
 	return r, nil
+}
+
+// appendSamples accumulates up to maxSamples, dropping the rest. Callers hold
+// r.mu.
+func (r *Recorder) appendSamples(samples []float32) {
+	room := maxSamples - len(r.buf)
+	if room <= 0 {
+		return
+	}
+	if room < len(samples) {
+		samples = samples[:room]
+	}
+	r.buf = append(r.buf, samples...)
 }
 
 // Start arms the recorder. Subsequent device callbacks accumulate into buf.

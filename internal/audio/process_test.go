@@ -3,6 +3,7 @@ package audio
 import (
 	"math"
 	"testing"
+	"time"
 )
 
 func sine(amp float32, n int) []float32 {
@@ -50,5 +51,29 @@ func TestNormalizeIgnoresTransients(t *testing.T) {
 	}
 	if peak, _ := Levels(samples); peak > 1 {
 		t.Errorf("peak after normalize = %.3f, want <= 1", peak)
+	}
+}
+
+// A capture device that delivers faster than real time must not grow the
+// buffer without bound; the daemon's wall-clock stop cannot be relied on for
+// that. Observed with an ALSA null device, which buffered 19279s of audio in
+// 4s of wall clock and drove onnxruntime to a 20 TB allocation.
+func TestAppendSamplesCapsBuffer(t *testing.T) {
+	r := &Recorder{}
+	chunk := make([]float32, SampleRate)
+	for i := 0; i < 2*int(MaxRecording/time.Second)+10; i++ {
+		r.appendSamples(chunk)
+	}
+	if len(r.buf) != maxSamples {
+		t.Errorf("buffer is %d samples, want the cap of %d", len(r.buf), maxSamples)
+	}
+}
+
+func TestAppendSamplesPartialFinalChunk(t *testing.T) {
+	r := &Recorder{}
+	r.appendSamples(make([]float32, maxSamples-10))
+	r.appendSamples(make([]float32, 100))
+	if len(r.buf) != maxSamples {
+		t.Errorf("buffer is %d samples, want the cap of %d", len(r.buf), maxSamples)
 	}
 }

@@ -12,23 +12,23 @@ import (
 
 // moonshine-tiny architecture.
 const (
-	numLayers       = 6
-	numKVHeads      = 8
-	headDim         = 36
-	bosToken  int64 = 1
-	eosToken  int64 = 2
-	maxLen          = 192
+	numLayers        = 6
+	numKVHeads       = 8
+	headDim          = 36
+	bosToken   int64 = 1
+	eosToken   int64 = 2
+	maxLen           = 192
 )
 
 // Model holds open encoder + decoder sessions and the tokenizer.
 type Model struct {
-	encoder              *ort.DynamicAdvancedSession
-	encInNames           []string
-	encOutNames          []string
-	decoder              *ort.DynamicAdvancedSession
-	decInNames           []string
-	decOutNames          []string
-	tok                  *Tokenizer
+	encoder     *ort.DynamicAdvancedSession
+	encInNames  []string
+	encOutNames []string
+	decoder     *ort.DynamicAdvancedSession
+	decInNames  []string
+	decOutNames []string
+	tok         *Tokenizer
 }
 
 var initOnce sync.Once
@@ -52,6 +52,10 @@ func LoadModel(modelDir, ortLibPath string) (*Model, error) {
 	decPath := filepath.Join(modelDir, "decoder.onnx")
 	tokPath := filepath.Join(modelDir, "tokenizer.json")
 
+	// Leave onnxruntime's CPU arena on. It grows to the high-water allocation
+	// and then reuses it, which is what keeps a session-long daemon flat.
+	// Disabling it looks better for the first few utterances but fragments
+	// upward without settling.
 	encIn, encOut, err := ort.GetInputOutputInfo(encPath)
 	if err != nil {
 		return nil, fmt.Errorf("encoder IO: %w", err)

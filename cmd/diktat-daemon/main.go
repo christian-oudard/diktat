@@ -27,6 +27,12 @@ const (
 	statusTx   = `<span color="#458588">● TX</span>`
 )
 
+// A recording nobody stops would grow the sample buffer forever, and the
+// encoder's cost grows with utterance length, so cut one off and transcribe
+// what we have. audio.MaxRecording is already past what the decoder can emit:
+// it stops after maxLen tokens, roughly a minute of speech.
+const maxRecording = audio.MaxRecording
+
 func main() {
 	version := flag.Bool("version", false, "report the installed and running daemon builds")
 	flag.Parse()
@@ -80,31 +86,46 @@ func main() {
 	log.Println("Model loaded, idle.")
 	setStatus("")
 
+	capCh := make(chan struct{}, 1)
 	d := &daemon{
 		model:    model,
 		recorder: rec,
 		cfg:      cfg,
 	}
+	d.capTimer = time.AfterFunc(maxRecording, func() {
+		select {
+		case capCh <- struct{}{}:
+		default:
+		}
+	})
+	d.capTimer.Stop()
 
-	for sig := range sigCh {
-		switch sig {
-		case syscall.SIGUSR1:
-			d.mu.Lock()
-			recording := d.recording
-			d.mu.Unlock()
-			if recording {
-				d.stopRecording()
-			} else {
-				d.startRecording()
-			}
-		case syscall.SIGTERM, syscall.SIGINT:
-			d.mu.Lock()
-			if d.recording {
+	for {
+		select {
+		case sig := <-sigCh:
+			switch sig {
+			case syscall.SIGUSR1:
+				if d.isRecording() {
+					d.stopRecording()
+				} else {
+					d.startRecording()
+				}
+			case syscall.SIGTERM, syscall.SIGINT:
+				d.capTimer.Stop()
+				d.mu.Lock()
 				d.recording = false
+				d.mu.Unlock()
+				log.Println("Daemon stopped.")
+				return
 			}
-			d.mu.Unlock()
-			log.Println("Daemon stopped.")
-			return
+		case <-capCh:
+			// The timer is stopped whenever recording stops, so this normally
+			// only fires mid-recording. Guard anyway against a stale tick that
+			// was already queued.
+			if d.isRecording() {
+				log.Printf("Hit the %s recording cap.", maxRecording)
+				d.stopRecording()
+			}
 		}
 	}
 }
@@ -113,9 +134,16 @@ type daemon struct {
 	model    *asr.Model
 	recorder *audio.Recorder
 	cfg      *config.Config
+	capTimer *time.Timer
 
 	mu        sync.Mutex
 	recording bool
+}
+
+func (d *daemon) isRecording() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.recording
 }
 
 func (d *daemon) startRecording() {
@@ -123,11 +151,13 @@ func (d *daemon) startRecording() {
 	d.mu.Lock()
 	d.recording = true
 	d.mu.Unlock()
+	d.capTimer.Reset(maxRecording)
 	setStatus(statusRec)
 	log.Println("Recording...")
 }
 
 func (d *daemon) stopRecording() {
+	d.capTimer.Stop()
 	samples := d.recorder.Stop()
 	d.mu.Lock()
 	d.recording = false

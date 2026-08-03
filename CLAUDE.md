@@ -12,7 +12,10 @@ time by a resumable curl download in `flake.nix`.
   recording on SIGUSR1, transcribes, types via wtype. Runs for the whole
   session; it never starts recording by itself and never exits by itself.
   Signal handlers are installed before the model load so a toggle during
-  startup is queued rather than killing the process.
+  startup is queued rather than killing the process. Recording is capped at
+  60s, since memory grows with utterance length and the daemon is resident.
+  The cap is enforced twice: a wall-clock timer in the daemon, and a sample
+  count in `internal/audio` that does not trust the device's frame rate.
 - `cmd/diktat-toggle/` - sends SIGUSR1 to the running daemon, fails if absent.
 - `cmd/diktat-repeat/` - re-types last transcription.
 - `internal/` - shared packages: asr, audio, config, output.

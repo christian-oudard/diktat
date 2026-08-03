@@ -23,9 +23,39 @@ your Sway config:
 - `diktat-repeat`: re-types the last transcription
 
 The daemon loads the model once at startup and then sits idle, so the first
-press records with no delay. It holds about 106M of model weights plus ONNX
-Runtime for as long as it runs. It does not start recording on its own, and it
+press records with no delay. It does not start recording on its own, and it
 does not exit on its own.
+
+## Memory
+
+The daemon is resident for the whole session, so its memory is bounded on
+purpose:
+
+- Freshly loaded, before any transcription: about 275 MB
+- Steady state after a few minutes of use: about 680 MB, flat
+- Peak during a full-length utterance: about 735 MB
+
+A typical utterance transcribes in well under 150ms; a full 60-second one takes
+about 1.1s.
+
+Recording stops automatically after 60 seconds and transcribes what it has.
+Without that the sample buffer would grow at 64 KB/s for as long as the
+recording ran, and the encoder attends over the whole utterance at once, so
+peak memory grows with length faster than linearly: 90 seconds of audio alone
+reached 1.3 GB. The cap costs nothing usable, since the decoder stops after 192
+tokens, roughly a minute of speech.
+
+The buffer is capped by sample count as well as by the clock, so a capture
+device that delivers frames faster than real time cannot grow it past 60
+seconds' worth either.
+
+Steady state sits well above idle because ONNX Runtime's CPU arena grows to the
+high-water allocation and then reuses it. That is deliberate, and it is what
+keeps a session-long daemon flat. Disabling the arena returns memory after each
+transcription and looks better over the first few utterances, but it fragments:
+measured over 360 utterances it wandered between 720 and 900 MB with peaks
+still climbing past 1.1 GB, where leaving it on sat at exactly 682 MB from the
+sixth round onward and never moved.
 
 Run it from a systemd user unit so it starts with the session and can be
 restarted after an upgrade:
