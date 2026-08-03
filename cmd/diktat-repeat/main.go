@@ -6,13 +6,12 @@ import (
 	"os"
 
 	"github.com/christian-oudard/diktat/internal/config"
+	"github.com/christian-oudard/diktat/internal/ipc"
 	"github.com/christian-oudard/diktat/internal/output"
 )
 
-const lastTextFile = "/tmp/diktat-last"
-
 func main() {
-	raw, err := os.ReadFile(lastTextFile)
+	raw, err := os.ReadFile(ipc.LastTextFile)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return

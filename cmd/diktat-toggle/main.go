@@ -3,17 +3,14 @@ package main
 
 import (
 	"log"
-	"os"
 	"os/exec"
-	"strconv"
-	"strings"
 	"syscall"
+
+	"github.com/christian-oudard/diktat/internal/ipc"
 )
 
-const pidFile = "/tmp/diktat-daemon.pid"
-
 func main() {
-	if pid := readPID(); pid != 0 {
+	if pid := ipc.ReadPID(); pid != 0 {
 		if err := syscall.Kill(pid, syscall.SIGUSR1); err == nil {
 			return
 		}
@@ -27,20 +24,4 @@ func main() {
 		log.Fatalf("start daemon: %v", err)
 	}
 	_ = cmd.Process.Release()
-}
-
-func readPID() int {
-	raw, err := os.ReadFile(pidFile)
-	if err != nil {
-		return 0
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
-	if err != nil {
-		return 0
-	}
-	// Probe liveness with signal 0.
-	if syscall.Kill(pid, 0) != nil {
-		return 0
-	}
-	return pid
 }

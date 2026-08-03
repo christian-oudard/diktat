@@ -25,6 +25,17 @@ Bind `diktat-toggle` to a key in your Sway config:
 The daemon stays running for instant recording on subsequent toggles. It auto-shuts
 down after 15 minutes idle.
 
+## Updating
+
+The keybinding resolves `diktat-toggle` at each press, so a new build takes
+effect on the next press. An already-running daemon keeps the old code in RAM
+until it exits, though. To check which build is live:
+
+    $ diktat-daemon -version
+
+This prints the installed store path and the running daemon's, and says so when
+they differ. The daemon also logs its own store path on startup.
+
 ## Stop daemon manually
 
     $ pkill -f diktat-daemon

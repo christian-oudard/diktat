@@ -17,15 +17,11 @@ import (
 	"github.com/christian-oudard/diktat/internal/asr"
 	"github.com/christian-oudard/diktat/internal/audio"
 	"github.com/christian-oudard/diktat/internal/config"
+	"github.com/christian-oudard/diktat/internal/ipc"
 	"github.com/christian-oudard/diktat/internal/output"
 )
 
 const (
-	pidFile      = "/tmp/diktat-daemon.pid"
-	statusFile   = "/tmp/diktat-status"
-	lastTextFile = "/tmp/diktat-last"
-	logFile      = "/tmp/diktat-daemon.log"
-
 	statusLoad = `<span color="#fabd2f">● LOAD</span>`
 	statusRec  = `<span color="#fb4934">● REC</span>`
 	statusTx   = `<span color="#458588">● TX</span>`
@@ -34,18 +30,24 @@ const (
 )
 
 func main() {
+	version := flag.Bool("version", false, "report the installed and running daemon builds")
 	flag.Parse()
+	if *version {
+		printVersion()
+		return
+	}
 
-	if logf, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644); err == nil {
+	if logf, err := os.OpenFile(ipc.LogFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644); err == nil {
 		log.SetOutput(logf)
 	}
 	log.SetFlags(log.Ltime)
+	log.Printf("Starting %s", exePath())
 
-	if err := os.WriteFile(pidFile, []byte(fmt.Sprint(os.Getpid())), 0644); err != nil {
+	if err := os.WriteFile(ipc.PIDFile, []byte(fmt.Sprint(os.Getpid())), 0644); err != nil {
 		log.Fatalf("write pid: %v", err)
 	}
-	defer os.Remove(pidFile)
-	defer os.Remove(statusFile)
+	defer os.Remove(ipc.PIDFile)
+	defer os.Remove(ipc.StatusFile)
 	setStatus(statusLoad)
 
 	modelDir := os.Getenv("MOONSHINE_MODEL_DIR")
@@ -170,7 +172,7 @@ func (d *daemon) stopRecording() {
 
 	if text != "" {
 		out := text + " "
-		if err := os.WriteFile(lastTextFile, []byte(out), 0644); err != nil {
+		if err := os.WriteFile(ipc.LastTextFile, []byte(out), 0644); err != nil {
 			log.Printf("last-text write: %v", err)
 		}
 		d.appendHistory(text)
@@ -210,5 +212,30 @@ func (d *daemon) appendHistory(text string) {
 }
 
 func setStatus(s string) {
-	_ = os.WriteFile(statusFile, []byte(s), 0644)
+	_ = os.WriteFile(ipc.StatusFile, []byte(s), 0644)
+}
+
+// exePath is the store path of this build, which is what distinguishes one
+// build of diktat from another.
+func exePath() string {
+	path, err := os.Executable()
+	if err != nil {
+		return "unknown"
+	}
+	return path
+}
+
+func printVersion() {
+	installed := exePath()
+	fmt.Println("installed:", installed)
+	pid := ipc.ReadPID()
+	if pid == 0 {
+		fmt.Println("running:   no daemon")
+		return
+	}
+	running := ipc.ExePath(pid)
+	fmt.Printf("running:   %s (pid %d)\n", running, pid)
+	if running != installed {
+		fmt.Println("The running daemon is stale. Restart it with: pkill -f diktat-daemon")
+	}
 }
