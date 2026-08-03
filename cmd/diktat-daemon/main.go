@@ -25,8 +25,6 @@ const (
 	statusLoad = `<span color="#fabd2f">● LOAD</span>`
 	statusRec  = `<span color="#fb4934">● REC</span>`
 	statusTx   = `<span color="#458588">● TX</span>`
-
-	idleTimeout = 15 * time.Minute
 )
 
 func main() {
@@ -36,6 +34,12 @@ func main() {
 		printVersion()
 		return
 	}
+
+	// Install handlers before loading the model: until this runs, SIGUSR1
+	// keeps its default disposition and would kill the daemon. A toggle
+	// pressed during startup queues here instead.
+	sigCh := make(chan os.Signal, 8)
+	signal.Notify(sigCh, syscall.SIGUSR1, syscall.SIGTERM, syscall.SIGINT)
 
 	if logf, err := os.OpenFile(ipc.LogFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644); err == nil {
 		log.SetOutput(logf)
@@ -73,30 +77,14 @@ func main() {
 		log.Fatalf("audio recorder: %v", err)
 	}
 	defer rec.Close()
-	log.Println("Model loaded.")
+	log.Println("Model loaded, idle.")
+	setStatus("")
 
 	d := &daemon{
 		model:    model,
 		recorder: rec,
 		cfg:      cfg,
 	}
-
-	sigCh := make(chan os.Signal, 8)
-	signal.Notify(sigCh, syscall.SIGUSR1, syscall.SIGTERM, syscall.SIGINT)
-
-	d.idleTimer = time.AfterFunc(idleTimeout, func() {
-		d.mu.Lock()
-		recording := d.recording
-		d.mu.Unlock()
-		if recording {
-			return
-		}
-		log.Println("Idle timeout, shutting down.")
-		sigCh <- syscall.SIGTERM
-	})
-	d.idleTimer.Stop()
-
-	d.startRecording()
 
 	for sig := range sigCh {
 		switch sig {
@@ -122,17 +110,15 @@ func main() {
 }
 
 type daemon struct {
-	model     *asr.Model
-	recorder  *audio.Recorder
-	cfg       *config.Config
-	idleTimer *time.Timer
+	model    *asr.Model
+	recorder *audio.Recorder
+	cfg      *config.Config
 
 	mu        sync.Mutex
 	recording bool
 }
 
 func (d *daemon) startRecording() {
-	d.idleTimer.Stop()
 	d.recorder.Start()
 	d.mu.Lock()
 	d.recording = true
@@ -149,7 +135,6 @@ func (d *daemon) stopRecording() {
 
 	if len(samples) == 0 {
 		setStatus("")
-		d.idleTimer.Reset(idleTimeout)
 		log.Println("No audio.")
 		return
 	}
@@ -165,7 +150,6 @@ func (d *daemon) stopRecording() {
 	if err != nil {
 		log.Printf("transcribe: %v", err)
 		setStatus("")
-		d.idleTimer.Reset(idleTimeout)
 		return
 	}
 	log.Printf("Transcribed in %s: %q", time.Since(t0), text)
@@ -182,7 +166,6 @@ func (d *daemon) stopRecording() {
 	}
 
 	setStatus("")
-	d.idleTimer.Reset(idleTimeout)
 }
 
 func (d *daemon) appendHistory(text string) {
@@ -236,6 +219,6 @@ func printVersion() {
 	running := ipc.ExePath(pid)
 	fmt.Printf("running:   %s (pid %d)\n", running, pid)
 	if running != installed {
-		fmt.Println("The running daemon is stale. Restart it with: pkill -f diktat-daemon")
+		fmt.Println("The running daemon is stale. Restart it with: systemctl --user restart diktat")
 	}
 }

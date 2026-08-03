@@ -8,34 +8,44 @@ Moonshine ONNX voice dictation for Linux/Wayland.
 
 ## Usage
 
-Bind `diktat-toggle` to a key in your Sway config:
+Run `diktat-daemon` for the whole session, and bind `diktat-toggle` to a key in
+your Sway config:
 
     bindsym XF86Favorites exec diktat-toggle
 
-- First press: loads model, then starts recording
+- First press: starts recording
 - Second press: stops recording, transcribes, types result
-- Subsequent presses: instant toggle (model stays loaded)
 
 ## How it works
 
-- `diktat-daemon`: background process that keeps the model in RAM
-- `diktat-toggle`: starts daemon if needed, toggles recording via signal
+- `diktat-daemon`: long-running process that keeps the model in RAM
+- `diktat-toggle`: sends SIGUSR1 to the daemon, which starts or stops recording
 - `diktat-repeat`: re-types the last transcription
 
-The daemon stays running for instant recording on subsequent toggles. It auto-shuts
-down after 15 minutes idle.
+The daemon loads the model once at startup and then sits idle, so the first
+press records with no delay. It holds about 106M of model weights plus ONNX
+Runtime for as long as it runs. It does not start recording on its own, and it
+does not exit on its own.
+
+Run it from a systemd user unit so it starts with the session and can be
+restarted after an upgrade:
+
+    $ systemctl --user restart diktat
+
+Signals sent while the model is still loading are queued, so a keypress during
+startup is not lost.
 
 ## Updating
 
 The keybinding resolves `diktat-toggle` at each press, so a new build takes
-effect on the next press. An already-running daemon keeps the old code in RAM
-until it exits, though. To check which build is live:
+effect on the next press. The daemon keeps the old code in RAM until restarted,
+though. To check which build is live:
 
     $ diktat-daemon -version
 
 This prints the installed store path and the running daemon's, and says so when
 they differ. The daemon also logs its own store path on startup.
 
-## Stop daemon manually
+## Stop the daemon
 
-    $ pkill -f diktat-daemon
+    $ systemctl --user stop diktat

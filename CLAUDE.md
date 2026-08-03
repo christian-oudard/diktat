@@ -9,8 +9,11 @@ time by a resumable curl download in `flake.nix`.
 ## Layout
 
 - `cmd/diktat-daemon/` - daemon: keeps model loaded, toggles
-  recording on SIGUSR1, transcribes, types via wtype.
-- `cmd/diktat-toggle/` - sends SIGUSR1, starts daemon if absent.
+  recording on SIGUSR1, transcribes, types via wtype. Runs for the whole
+  session; it never starts recording by itself and never exits by itself.
+  Signal handlers are installed before the model load so a toggle during
+  startup is queued rather than killing the process.
+- `cmd/diktat-toggle/` - sends SIGUSR1 to the running daemon, fails if absent.
 - `cmd/diktat-repeat/` - re-types last transcription.
 - `internal/` - shared packages: asr, audio, config, output.
 
