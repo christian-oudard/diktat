@@ -46,12 +46,12 @@ The daemon logs each capture's level and result to `/tmp/diktat-daemon.log`
 $ tail -f /tmp/diktat-daemon.log
 ```
 
-Each transcription logs peak, RMS, applied gain, and the decoded text, for
-example:
+Each transcription logs the capture's duration, peak, RMS, applied gain, and
+the decoded text:
 
 ```
-Transcribing 2.0s (peak 0.478 rms 0.0165 gain 3.6x)...
-Transcribed in 20ms: ""
+Transcribing <dur>s (peak <p> rms <r> gain <g>x)...
+Transcribed in <t>: "<text>"
 ```
 
 An empty result with low RMS points at the mic. An empty result with healthy
@@ -59,8 +59,17 @@ RMS (above ~0.04) points at the model path.
 
 ## 3. Capture a fixed corpus
 
-To iterate on preprocessing without re-recording, capture reference WAVs once.
-Read these five sentences (phonetically balanced) in one take per recording:
+To iterate on preprocessing without re-recording, capture a reference WAV once.
+`diktat-record` captures to `recording.wav` at 16 kHz mono (the daemon's
+capture path) and shows a live level meter so you can confirm the mic produces
+signal before reading. Press Ctrl-C when you finish:
+
+```
+$ nix build
+$ ./result/bin/diktat-record recording.wav
+```
+
+Read these five phonetically balanced sentences:
 
 1. The birch canoe slid on the smooth planks.
 2. Glue the sheet to the dark blue background.
@@ -68,17 +77,10 @@ Read these five sentences (phonetically balanced) in one take per recording:
 4. The juice of lemons makes fine punch.
 5. A pod of whales sped past the quiet cove.
 
-Record three takes at whisper, normal, and loud volume. Use 16 kHz mono to
-match the daemon's capture. Press Ctrl-C to stop each:
-
-```
-$ pw-record --rate 16000 --channels 1 --format s16 whisper.wav
-$ pw-record --rate 16000 --channels 1 --format s16 normal.wav
-$ pw-record --rate 16000 --channels 1 --format s16 loud.wav
-```
-
-Add `--target <id>` to capture from a specific source instead of the default,
-so you can compare mics on identical speech.
+Pass a different name to record several takes for comparison. Recording is from
+the default source, so choose the mic first with `wpctl set-default <id>`. A
+flat meter means no signal is reaching the capture path, even if system meters
+look fine.
 
 Captured `.wav` files are gitignored so voice recordings are never committed.
 
@@ -89,18 +91,14 @@ to preprocessing can be measured against the same audio every time:
 
 ```
 $ nix build
-$ ./result/bin/diktat-transcribe whisper.wav normal.wav loud.wav
-$ ./result/bin/diktat-transcribe -raw whisper.wav normal.wav loud.wav
+$ ./result/bin/diktat-transcribe recording.wav
+$ ./result/bin/diktat-transcribe -raw recording.wav
 ```
 
 `-raw` skips normalization, so the two runs show what normalization changes.
-Each line prints duration, peak, RMS, gain, and the decoded text:
+Each line prints duration, peak, RMS, gain, and the decoded text.
 
-```
-normal.wav       6.8s  peak 0.389  rms 0.0253  gain  2.4x  ->  "..."
-```
-
-Compare the takes: if quiet-but-audible speech (RMS above the floor) still
-transcribes empty after normalization, the target RMS or preprocessing needs
-adjusting. If only loud speech ever works, the mic gain is the problem, fix it
-at step 1.
+Read the numbers this way: if quiet-but-audible speech (RMS above the floor)
+still transcribes empty after normalization, the target RMS or preprocessing
+needs adjusting. If only loud speech ever works, the mic gain is the problem,
+fix it at step 1.

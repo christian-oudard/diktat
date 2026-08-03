@@ -21,6 +21,7 @@ type Recorder struct {
 	mu     sync.Mutex
 	active bool
 	buf    []float32
+	level  float64
 }
 
 // NewRecorder initializes the miniaudio context and a 16kHz mono float32
@@ -48,11 +49,17 @@ func NewRecorder() (*Recorder, error) {
 				return
 			}
 			samples := make([]float32, frameCount)
+			var peak float32
 			for i := range samples {
 				bits := binary.LittleEndian.Uint32(in[4*i:])
-				samples[i] = math.Float32frombits(bits)
+				s := math.Float32frombits(bits)
+				samples[i] = s
+				if a := float32(math.Abs(float64(s))); a > peak {
+					peak = a
+				}
 			}
 			r.buf = append(r.buf, samples...)
+			r.level = float64(peak)
 		},
 	}
 
@@ -88,6 +95,14 @@ func (r *Recorder) Stop() []float32 {
 	out := r.buf
 	r.buf = nil
 	return out
+}
+
+// Level returns the peak amplitude of the most recent capture callback, for a
+// live meter while recording.
+func (r *Recorder) Level() float64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.level
 }
 
 // Close stops the device and releases the context.

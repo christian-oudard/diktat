@@ -94,6 +94,7 @@
           "cmd/diktat-toggle"
           "cmd/diktat-repeat"
           "cmd/diktat-transcribe"
+          "cmd/diktat-record"
         ];
         nativeBuildInputs = [ pkgs.makeWrapper ];
         postInstall = ''

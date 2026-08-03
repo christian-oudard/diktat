@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -75,4 +76,33 @@ func ReadWAV(path string) ([]float32, int, error) {
 		return nil, 0, fmt.Errorf("%s: unsupported format %d at %d-bit", path, audioFmt, bits)
 	}
 	return mono, int(sampleRate), nil
+}
+
+// WriteWAV writes samples as a 16-bit PCM mono WAV at the given sample rate.
+func WriteWAV(path string, samples []float32, rate int) error {
+	var b bytes.Buffer
+	dataLen := len(samples) * 2
+	b.WriteString("RIFF")
+	binary.Write(&b, binary.LittleEndian, uint32(36+dataLen))
+	b.WriteString("WAVE")
+	b.WriteString("fmt ")
+	binary.Write(&b, binary.LittleEndian, uint32(16))
+	binary.Write(&b, binary.LittleEndian, uint16(1)) // PCM
+	binary.Write(&b, binary.LittleEndian, uint16(1)) // mono
+	binary.Write(&b, binary.LittleEndian, uint32(rate))
+	binary.Write(&b, binary.LittleEndian, uint32(rate*2)) // byte rate
+	binary.Write(&b, binary.LittleEndian, uint16(2))      // block align
+	binary.Write(&b, binary.LittleEndian, uint16(16))     // bits
+	b.WriteString("data")
+	binary.Write(&b, binary.LittleEndian, uint32(dataLen))
+	for _, s := range samples {
+		v := s * 32767
+		if v > 32767 {
+			v = 32767
+		} else if v < -32768 {
+			v = -32768
+		}
+		binary.Write(&b, binary.LittleEndian, int16(v))
+	}
+	return os.WriteFile(path, b.Bytes(), 0644)
 }
