@@ -65,6 +65,19 @@
         # loaded between utterances.
         buildInputs = [ whisper ];
         subPackages = [ "cmd/diktat" ];
+        # The default check phase tests only subPackages, which is cmd/diktat
+        # and has no test files, so it ran nothing. Test everything instead.
+        #
+        # It also drops -trimpath for tests, in case they read assets by path.
+        # That changes the build cache key, so every dependency buildPhase just
+        # compiled is compiled again, and internal/audio binds miniaudio, a
+        # single 96k-line header worth 17s on its own. Nothing here reads an
+        # asset, so keep the flag and reuse the cache.
+        checkPhase = ''
+          runHook preCheck
+          go test ./...
+          runHook postCheck
+        '';
         nativeBuildInputs = [ pkgs.makeWrapper ];
         postInstall = ''
           for bin in $out/bin/*; do
