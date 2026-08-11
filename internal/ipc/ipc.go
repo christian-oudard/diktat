@@ -47,14 +47,54 @@ func ResolveModel(nameOrPath string) string {
 		return abs
 	}
 	path := filepath.Join(ModelsDir(), nameOrPath)
+	if _, err := os.Stat(path); err == nil {
+		return path
+	}
 	// Moonshine models are directories, whisper models a single ggml file, so
 	// a bare whisper name needs the suffix filling in.
-	if _, err := os.Stat(path); err != nil {
-		if bin := path + ".bin"; fileExists(bin) {
-			return bin
-		}
+	if bin := path + ".bin"; fileExists(bin) {
+		return bin
+	}
+	// The model the build ships lives in the nix store rather than the cache,
+	// but should still answer to its own name: MOONSHINE_MODEL_DIR is a store
+	// path like /nix/store/<hash>-moonshine-tiny-models.
+	if b := BundledModel(); b != "" && strings.Contains(filepath.Base(b), nameOrPath) {
+		return b
 	}
 	return path
+}
+
+// BundledModel is the model the nix wrapper points the binaries at.
+func BundledModel() string {
+	return os.Getenv("MOONSHINE_MODEL_DIR")
+}
+
+// AvailableModels lists every name a bare argument could resolve to, for
+// telling the user what they can switch to when a name does not resolve.
+func AvailableModels() []string {
+	var out []string
+	if b := BundledModel(); b != "" {
+		out = append(out, fmt.Sprintf("%-18s %s", bundledName(b), b))
+	}
+	entries, err := os.ReadDir(ModelsDir())
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		name := strings.TrimSuffix(e.Name(), ".bin")
+		out = append(out, fmt.Sprintf("%-18s %s", name, filepath.Join(ModelsDir(), e.Name())))
+	}
+	return out
+}
+
+// bundledName strips the store hash and the derivation's -models suffix, so
+// /nix/store/<hash>-moonshine-tiny-models reads as moonshine-tiny.
+func bundledName(storePath string) string {
+	base := filepath.Base(storePath)
+	if _, rest, found := strings.Cut(base, "-"); found {
+		base = rest
+	}
+	return strings.TrimSuffix(base, "-models")
 }
 
 func fileExists(path string) bool {

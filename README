@@ -46,8 +46,10 @@ Both engines are switchable:
 
 The daemon tells them apart by whether the path is a directory or a `.bin`.
 
-A bare name resolves under `~/.cache/diktat/models`; anything with a slash is
-used as a path. Moonshine takes about 1.5s to load the first time; after that
+A bare name resolves under `~/.cache/diktat/models`, or to the model the build
+bundles, which lives in the nix store rather than the cache but still answers
+to its own name. Anything with a slash is used as a path. A name that resolves
+to nothing lists what is available. Moonshine takes about 1.5s to load the first time; after that
 every model stays resident, so switching back to one already seen is instant. A
 swap does not interrupt a recording in progress, since the capture buffer is
 independent of the model. If the new model fails to load, the daemon keeps

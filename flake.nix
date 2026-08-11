@@ -83,6 +83,11 @@
         pkgs.pipewire
       ];
       audioLibs = pkgs.lib.makeLibraryPath audioInputs;
+
+      # The store hash says whether two builds differ, not which commit they
+      # came from, so stamp the revision in. A dirty tree has no rev, only
+      # dirtyShortRev, and a tarball source has neither.
+      gitRev = self.shortRev or self.dirtyShortRev or "unknown";
     in
     {
       packages.${system}.default = pkgs.buildGoModule {
@@ -90,6 +95,7 @@
         version = "0.2.0";
         src = ./.;
         vendorHash = null;
+        ldflags = [ "-X main.gitRev=${gitRev}" ];
         subPackages = [
           "cmd/diktat-daemon"
           "cmd/diktat-model"

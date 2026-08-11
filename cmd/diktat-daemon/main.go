@@ -29,6 +29,10 @@ const (
 	statusTx   = `<span color="#458588">● TX</span>`
 )
 
+// gitRev is stamped in by the nix build via ldflags. The store path alone
+// says whether two builds differ, not which commit either one is.
+var gitRev = "unknown"
+
 // A recording nobody stops would grow the sample buffer forever, and the
 // encoder's cost grows with utterance length, so cut one off and transcribe
 // what we have. audio.MaxRecording is already past what the decoder can emit:
@@ -53,7 +57,7 @@ func main() {
 		log.SetOutput(logf)
 	}
 	log.SetFlags(log.Ltime)
-	log.Printf("Starting %s", exePath())
+	log.Printf("Starting %s %s", gitRev, exePath())
 
 	if err := os.WriteFile(ipc.PIDFile, []byte(fmt.Sprint(os.Getpid())), 0644); err != nil {
 		log.Fatalf("write pid: %v", err)
@@ -333,15 +337,22 @@ func exePath() string {
 
 func printVersion() {
 	installed := exePath()
-	fmt.Println("installed:", installed)
+	fmt.Printf("commit:    %s\n", gitRev)
+	fmt.Printf("installed: %s\n", installed)
+
 	pid := ipc.ReadPID()
 	if pid == 0 {
 		fmt.Println("running:   no daemon")
 		return
 	}
 	running := ipc.ExePath(pid)
-	fmt.Printf("running:   %s (pid %d)\n", running, pid)
-	if running != installed {
-		fmt.Println("The running daemon is stale. Restart it with: systemctl --user restart diktat")
+	if running == installed {
+		fmt.Printf("running:   same build (pid %d)\n", pid)
+		return
 	}
+	// Different store path means a different build, so the commit printed
+	// above describes the installed binary and not the running one.
+	fmt.Printf("running:   %s (pid %d)\n", running, pid)
+	fmt.Println("The running daemon is a different build, so the commit above is not")
+	fmt.Println("what it is running. Restart it with: systemctl --user restart diktat")
 }

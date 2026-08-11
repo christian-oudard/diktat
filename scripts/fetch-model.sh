@@ -11,7 +11,14 @@ name="${1:?usage: fetch-model.sh <moonshine-tiny|moonshine-base|whisper-SIZE>}"
 models="${XDG_CACHE_HOME:-$HOME/.cache}/diktat/models"
 mkdir -p "$models"
 
-fetch() { [ -s "$2" ] || curl -# -L --fail --continue-at - -o "$2" "$1"; }
+fetch() { # url dest
+    if [ -s "$2" ]; then
+        echo "have $(basename "$2")" >&2
+        return
+    fi
+    echo "fetching $(basename "$2")" >&2
+    curl -# -L --fail --continue-at - -o "$2" "$1"
+}
 
 case "$name" in
 moonshine-*)

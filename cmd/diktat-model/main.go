@@ -34,7 +34,12 @@ func main() {
 
 	dir := ipc.ResolveModel(os.Args[1])
 	if err := ipc.CheckModel(dir); err != nil {
-		log.Fatal(err)
+		fmt.Fprintf(os.Stderr, "%v\n\navailable:\n", err)
+		for _, m := range ipc.AvailableModels() {
+			fmt.Fprintf(os.Stderr, "  %s\n", m)
+		}
+		fmt.Fprintln(os.Stderr, "\nfetch another with: ./scripts/fetch-model.sh <name>")
+		os.Exit(1)
 	}
 	if err := os.WriteFile(ipc.ModelFile, []byte(dir), 0644); err != nil {
 		log.Fatalf("write model file: %v", err)
