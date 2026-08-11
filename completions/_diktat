@@ -37,9 +37,6 @@ _diktat() {
                 _diktat_models
             fi
             ;;
-        daemon)
-            _diktat_models
-            ;;
         transcribe)
             _arguments '-raw[skip normalization]' '-model[model to use]:model:_diktat_models' '*:wav file:_files -g "*.wav"'
             ;;

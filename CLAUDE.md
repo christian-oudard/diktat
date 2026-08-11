@@ -109,6 +109,9 @@ itself on PATH, `nix profile add .`.
 
 `~/.config/diktat/config.toml` (optional). Keys:
 
+- `model` - model the daemon starts on, default `whisper-tiny.en`. `diktat
+  model` switches the running daemon without writing here, so a restart comes
+  back to a known model.
 - `paste_methods` - map of sway app_id to paste key combo (`C-v`, `C-S-v`)
 - `history_file` - JSONL append target for each transcription
 

@@ -17,7 +17,7 @@ type command struct {
 }
 
 var commands = []command{
-	{"daemon", "[<model>]", "Run the Diktat voice transcription daemon.", runDaemon, false},
+	{"daemon", "", "Run the Diktat voice transcription daemon.", runDaemon, false},
 	{"toggle", "", "Start or stop recording.", runToggle, false},
 	{"repeat", "", "Repeat the last transcription, typing the text again.", runRepeat, false},
 	{"model", "[<model> | download <model>]", "Manage voice transcription models.", runModel, false},

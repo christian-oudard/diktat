@@ -12,6 +12,10 @@ import (
 
 // Config is the on-disk schema. All fields are optional.
 type Config struct {
+	// Model the daemon starts on. `diktat model` switches the running daemon
+	// without touching this, so a restart comes back to a known model rather
+	// than to whatever was last selected.
+	Model        string            `toml:"model"`
 	PasteMethods map[string]string `toml:"paste_methods"`
 	HistoryFile  string            `toml:"history_file"`
 }

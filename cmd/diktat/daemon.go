@@ -4,7 +4,6 @@ package main
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -37,8 +36,9 @@ const (
 const maxRecording = audio.MaxRecording
 
 func runDaemon(args []string) {
-	fs := flag.NewFlagSet("daemon", flag.ExitOnError)
-	fs.Parse(args)
+	if len(args) > 0 {
+		log.Fatalf("daemon takes no arguments; set model in %s", config.DefaultPath())
+	}
 
 	// Install handlers before loading the model: until this runs, SIGUSR1
 	// keeps its default disposition and would kill the daemon. A toggle
@@ -52,11 +52,16 @@ func runDaemon(args []string) {
 	if ortLib == "" {
 		log.Fatal("ONNXRUNTIME_LIB must be set")
 	}
-	// Nothing is bundled, so the daemon starts on whichever menu entry was
-	// asked for, or the default. Never download implicitly; say what to type.
-	name := models.Default
-	if fs.NArg() > 0 {
-		name = fs.Arg(0)
+	cfg, err := config.Load(config.DefaultPath())
+	if err != nil {
+		log.Printf("config: %v (continuing with defaults)", err)
+		cfg = &config.Config{}
+	}
+	// Nothing is bundled, so the daemon starts on the configured model, or the
+	// default. Never download implicitly; say what to type.
+	name := cfg.Model
+	if name == "" {
+		name = models.Default
 	}
 	modelDir := models.Resolve(name)
 	if err := models.Check(modelDir); err != nil {
@@ -76,15 +81,9 @@ func runDaemon(args []string) {
 	defer os.Remove(ipc.StatusFile)
 	setStatus(statusLoad)
 
-	cfg, err := config.Load(config.DefaultPath())
-	if err != nil {
-		log.Printf("config: %v (continuing with defaults)", err)
-		cfg = &config.Config{}
-	}
-
-	// A `diktat model` switch deliberately does not persist across a restart:
-	// the daemon comes back on a known model rather than on whatever a stale
-	// /tmp file says.
+	// A `diktat model` switch deliberately does not persist: the daemon comes
+	// back on the configured model rather than on whatever a stale /tmp file
+	// says.
 	model, err := asr.Load(modelDir, ortLib)
 	if err != nil {
 		log.Fatalf("load model: %v", err)
