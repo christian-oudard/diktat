@@ -8,7 +8,10 @@ time by a resumable curl download in `flake.nix`.
 
 ## Layout
 
-- `cmd/diktat-daemon/` - daemon: keeps model loaded, toggles
+- `cmd/diktat/` - one binary, one file per subcommand (daemon, toggle,
+  repeat, model, record, transcribe). `main.go` holds the dispatch table,
+  which also backs the zsh completion in `completions/`.
+- `daemon.go` - keeps the model loaded, toggles
   recording on SIGUSR1, transcribes, types via wtype. Runs for the whole
   session; it never starts recording by itself and never exits by itself.
   Signal handlers are installed before the model load so a toggle during
@@ -16,10 +19,11 @@ time by a resumable curl download in `flake.nix`.
   60s, since memory grows with utterance length and the daemon is resident.
   The cap is enforced twice: a wall-clock timer in the daemon, and a sample
   count in `internal/audio` that does not trust the device's frame rate.
-- `cmd/diktat-toggle/` - sends SIGUSR1 to the running daemon, fails if absent.
-- `cmd/diktat-repeat/` - re-types last transcription.
-- `cmd/diktat-model/` - reports or swaps the daemon's model via SIGHUP. Models
-  stay resident once loaded, so switching back is instant.
+- `model.go` - lists, switches (via SIGHUP), or downloads models. Models stay
+  resident once loaded, so switching back is instant.
+- `internal/models` - the menu. Four entries, none bundled: everything is
+  downloaded into `~/.cache/diktat/models`, so no model is a special case.
+  Downloads are never implicit.
 - `internal/asr` - `Backend` is the interface the daemon holds; `asr.Load`
   picks the implementation from the path. A directory is moonshine, whose
   layer count, KV head count and head dim are read off the decoder's ONNX
@@ -34,10 +38,18 @@ time by a resumable curl download in `flake.nix`.
 The wrapped binaries see these environment variables (set by the nix wrapper):
 
 - `ONNXRUNTIME_LIB` - absolute path to libonnxruntime.so
-- `MOONSHINE_MODEL_DIR` - directory with `encoder.onnx`, `decoder.onnx`,
-  `tokenizer.json`
+
+Models are not part of the build; they are fetched at runtime into the user's
+cache by `diktat model download`.
 
 External CLIs expected on PATH: `wtype`, `wl-copy`, `wl-paste`, `swaymsg`.
+
+whisper.cpp is linked in via cgo rather than shelled out to, so its model
+stays loaded. ggml loads each compute backend from a separate shared library
+at runtime, which nothing finds by default from a Go binary, so the wrapper
+sets `GGML_BACKEND_DIR` and `internal/asr` calls
+`ggml_backend_load_all_from_path` with it. Without that ggml registers no
+backend and aborts inside `whisper_init`.
 The wrapper prepends them.
 
 ## IPC files (in `/tmp`)
@@ -53,8 +65,12 @@ The wrapper prepends them.
 
 ```
 nix build
-./result/bin/diktat-daemon
+./result/bin/diktat model download whisper-tiny.en
+./result/bin/diktat daemon
 ```
+
+`nix build` only writes ./result; it puts nothing on PATH. To get `diktat`
+itself on PATH, `nix profile add .`.
 
 ## Config
 

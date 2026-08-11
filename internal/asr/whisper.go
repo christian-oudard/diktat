@@ -1,60 +1,139 @@
 package asr
 
+// Whisper runs whisper.cpp in process. The model is loaded once and stays
+// loaded, the same as moonshine, rather than being re-read per utterance.
+//
+// Only four calls are needed, so this binds them directly instead of pulling
+// in whisper.cpp's own Go bindings.
+
+/*
+#cgo LDFLAGS: -lwhisper -lggml -lggml-base
+#include <stdlib.h>
+#include <whisper.h>
+#include <ggml-backend.h>
+
+// whisper_full takes params by value, and cgo cannot build a struct literal
+// with C function pointers in it, so set up the params on the C side.
+static int diktat_full(struct whisper_context *ctx, float *samples, int n, int threads) {
+    struct whisper_full_params p = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+    p.n_threads         = threads;
+    p.translate         = false;
+    p.no_context        = true;   // each utterance stands alone
+    p.single_segment    = false;
+    p.print_progress    = false;
+    p.print_realtime    = false;
+    p.print_timestamps  = false;
+    p.print_special     = false;
+    p.suppress_blank    = true;
+    return whisper_full(ctx, p, samples, n);
+}
+
+// whisper.cpp and ggml narrate model loading to stderr. The daemon has its own
+// log and the offline tools print results, so drop it.
+static void diktat_quiet(enum ggml_log_level level, const char *text, void *user) {
+    (void)level; (void)text; (void)user;
+}
+
+// Silence both before loading backends, which narrates too.
+static void diktat_silence(void) {
+    whisper_log_set(diktat_quiet, NULL);
+    ggml_log_set(diktat_quiet, NULL);
+}
+
+static struct whisper_context *diktat_init(const char *path, int use_gpu) {
+    struct whisper_context_params cp = whisper_context_default_params();
+    cp.use_gpu = use_gpu;
+    return whisper_init_from_file_with_params(path, cp);
+}
+*/
+import "C"
+
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
-
-	"github.com/christian-oudard/diktat/internal/wav"
+	"sync"
+	"unsafe"
 )
 
-// Whisper runs whisper.cpp over its CLI. There is no cgo binding here on
-// purpose: this exists to judge whisper against moonshine on real dictation,
-// and shelling out is enough to answer that. It reloads the model per
-// utterance, so it is slower than moonshine by a fixed cost.
-type Whisper struct {
-	modelPath string
+// ggml keeps each compute backend in its own shared library and loads them at
+// runtime. Nothing finds them by default from a Go binary, so point it at the
+// directory the nix wrapper names. Without this ggml registers no backend at
+// all and aborts inside whisper_init.
+var loadBackends sync.Once
+
+func initGGML() {
+	loadBackends.Do(func() {
+		C.diktat_silence()
+		dir := os.Getenv("GGML_BACKEND_DIR")
+		if dir == "" {
+			C.ggml_backend_load_all()
+			return
+		}
+		cDir := C.CString(dir)
+		defer C.free(unsafe.Pointer(cDir))
+		C.ggml_backend_load_all_from_path(cDir)
+	})
 }
 
-// LoadWhisper checks the ggml model and the CLI are both present, so a bad
-// switch fails at load rather than on the first utterance.
+type Whisper struct {
+	ctx     *C.struct_whisper_context
+	name    string
+	threads int
+}
+
+// LoadWhisper opens a ggml model and keeps it open.
 func LoadWhisper(modelPath string) (*Whisper, error) {
 	if _, err := os.Stat(modelPath); err != nil {
 		return nil, fmt.Errorf("whisper model: %w", err)
 	}
-	if _, err := exec.LookPath("whisper-cli"); err != nil {
-		return nil, fmt.Errorf("whisper-cli not on PATH: %w", err)
+	initGGML()
+
+	cPath := C.CString(modelPath)
+	defer C.free(unsafe.Pointer(cPath))
+
+	// CPU only for now; GPU backends would be loaded the same way.
+	ctx := C.diktat_init(cPath, C.int(0))
+	if ctx == nil {
+		return nil, fmt.Errorf("whisper: cannot load %s", modelPath)
 	}
-	return &Whisper{modelPath: modelPath}, nil
+	return &Whisper{
+		ctx:     ctx,
+		name:    strings.TrimSuffix(filepath.Base(modelPath), ".bin"),
+		threads: runtime.NumCPU(),
+	}, nil
 }
 
 func (w *Whisper) Arch() string {
-	return "whisper.cpp " + strings.TrimSuffix(filepath.Base(w.modelPath), ".bin")
+	return fmt.Sprintf("whisper.cpp %s, %d threads", w.name, w.threads)
 }
 
-func (w *Whisper) Close() {}
+func (w *Whisper) Close() {
+	if w.ctx != nil {
+		C.whisper_free(w.ctx)
+		w.ctx = nil
+	}
+}
 
-// Transcribe writes the samples to a temporary 16 kHz WAV, since whisper-cli
-// reads a file rather than stdin.
+// Transcribe runs the model over 16 kHz mono samples. Whisper pads every
+// utterance to a 30 second window internally, so the cost is roughly flat
+// regardless of how long the utterance actually is.
 func (w *Whisper) Transcribe(audio []float32) (string, error) {
-	dir, err := os.MkdirTemp("", "diktat-whisper")
-	if err != nil {
-		return "", err
+	if len(audio) == 0 {
+		return "", nil
 	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "audio.wav")
-	if err := wav.WriteWAV(path, audio, wav.SampleRate); err != nil {
-		return "", err
+	rc := C.diktat_full(w.ctx, (*C.float)(unsafe.Pointer(&audio[0])), C.int(len(audio)), C.int(w.threads))
+	if rc != 0 {
+		return "", fmt.Errorf("whisper_full: %d", int(rc))
 	}
+	// Keep audio alive across the call, since C holds the pointer.
+	runtime.KeepAlive(audio)
 
-	out, err := exec.Command("whisper-cli",
-		"-m", w.modelPath, "-f", path, "-nt", "-np", "-l", "en").Output()
-	if err != nil {
-		return "", fmt.Errorf("whisper-cli: %w", err)
+	var b strings.Builder
+	for i := C.int(0); i < C.whisper_full_n_segments(w.ctx); i++ {
+		b.WriteString(C.GoString(C.whisper_full_get_segment_text(w.ctx, i)))
 	}
-	// -nt drops timestamps, -np drops the banner, so what is left is the text,
-	// which whisper pads with spaces and splits over segment lines.
-	return strings.TrimSpace(strings.Join(strings.Fields(string(out)), " ")), nil
+	return strings.TrimSpace(strings.Join(strings.Fields(b.String()), " ")), nil
 }

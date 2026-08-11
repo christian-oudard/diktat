@@ -60,13 +60,13 @@ RMS (above ~0.04) points at the model path.
 ## 3. Capture a fixed corpus
 
 To iterate on preprocessing without re-recording, capture a reference WAV once.
-`diktat-record` captures to `recording.wav` at 16 kHz mono (the daemon's
+`diktat record` captures to `recording.wav` at 16 kHz mono (the daemon's
 capture path) and shows a live level meter so you can confirm the mic produces
 signal before reading. Press Ctrl-C when you finish:
 
 ```
 $ nix build
-$ ./result/bin/diktat-record recording.wav
+$ diktat record recording.wav
 ```
 
 Read these five phonetically balanced sentences:
@@ -86,13 +86,13 @@ Captured `.wav` files are gitignored so voice recordings are never committed.
 
 ## 4. Run the offline pipeline
 
-`diktat-transcribe` runs the exact Moonshine pipeline on WAV files, so a change
+`diktat transcribe` runs the exact model pipeline on WAV files, so a change
 to preprocessing can be measured against the same audio every time:
 
 ```
 $ nix build
-$ ./result/bin/diktat-transcribe recording.wav
-$ ./result/bin/diktat-transcribe -raw recording.wav
+$ diktat transcribe recording.wav
+$ diktat transcribe -raw recording.wav
 ```
 
 `-raw` skips normalization, so the two runs show what normalization changes.
@@ -106,25 +106,19 @@ fix it at step 1.
 ## 5. Compare ASR engines
 
 If healthy audio still transcribes badly, the model is the suspect, not the
-capture. `scripts/compare-asr.sh` runs the same WAVs through moonshine at two
-sizes and whisper at two sizes, so the comparison is on your voice and your mic
-rather than on a published benchmark:
+capture. `diktat transcribe -model` runs any model in the menu over the same WAVs, so
+the comparison is on your voice and your mic rather than on a published
+benchmark:
 
 ```
-$ nix develop
-$ ./scripts/compare-asr.sh recording.wav
+$ for m in $(diktat model --names); do
+      echo "== $m"; diktat transcribe -model $m recording.wav
+  done
 ```
 
 The daemon saves every capture to `/tmp/diktat-last.wav` before normalization,
 so a bad transcription can be fed straight in without re-recording it.
 
-Extra models are cached under `~/.cache/diktat-asr-compare` and never enter the
-nix build, so the runtime closure stays as it is.
-
-To run the daemon on a different moonshine size, point it at a cached one; the
-architecture is read from the model, so nothing else needs to change:
-
-```
-$ MOONSHINE_MODEL_DIR=~/.cache/diktat-asr-compare/moonshine-base \
-      ./result/bin/diktat-daemon
-```
+Models are cached under `~/.cache/diktat/models` and never enter the nix build,
+so the runtime closure stays small. To switch the running daemon instead of
+transcribing offline, use `diktat model <name>`.

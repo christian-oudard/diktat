@@ -8,7 +8,7 @@ import (
 	"github.com/christian-oudard/diktat/internal/ipc"
 )
 
-func main() {
+func runToggle(args []string) {
 	pid := ipc.ReadPID()
 	if pid == 0 {
 		log.Fatal("no diktat-daemon running")

@@ -11,17 +11,23 @@ import (
 
 	"github.com/christian-oudard/diktat/internal/asr"
 	"github.com/christian-oudard/diktat/internal/audio"
+	"github.com/christian-oudard/diktat/internal/models"
 	"github.com/christian-oudard/diktat/internal/wav"
 )
 
-func main() {
-	raw := flag.Bool("raw", false, "skip normalization")
-	flag.Parse()
+func runTranscribe(args []string) {
+	fs := flag.NewFlagSet("transcribe", flag.ExitOnError)
+	raw := fs.Bool("raw", false, "skip normalization")
+	name := fs.String("model", models.Default, "model to transcribe with")
+	fs.Parse(args)
 
-	modelDir := os.Getenv("MOONSHINE_MODEL_DIR")
 	ortLib := os.Getenv("ONNXRUNTIME_LIB")
-	if modelDir == "" || ortLib == "" {
-		log.Fatal("MOONSHINE_MODEL_DIR and ONNXRUNTIME_LIB must be set")
+	if ortLib == "" {
+		log.Fatal("ONNXRUNTIME_LIB must be set")
+	}
+	modelDir := models.Resolve(*name)
+	if err := models.Check(modelDir); err != nil {
+		log.Fatalf("%s is not downloaded. Get it with:\n  diktat model download %s", *name, *name)
 	}
 	// Accepts a whisper .bin as readily as a moonshine directory.
 	model, err := asr.Load(modelDir, ortLib)
@@ -30,7 +36,7 @@ func main() {
 	}
 	defer model.Close()
 
-	for _, path := range flag.Args() {
+	for _, path := range fs.Args() {
 		samples, rate, err := wav.ReadWAV(path)
 		if err != nil {
 			log.Printf("%v", err)

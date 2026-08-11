@@ -19,6 +19,7 @@ import (
 	"github.com/christian-oudard/diktat/internal/audio"
 	"github.com/christian-oudard/diktat/internal/config"
 	"github.com/christian-oudard/diktat/internal/ipc"
+	"github.com/christian-oudard/diktat/internal/models"
 	"github.com/christian-oudard/diktat/internal/output"
 	"github.com/christian-oudard/diktat/internal/wav"
 )
@@ -39,9 +40,10 @@ var gitRev = "unknown"
 // it stops after maxLen tokens, roughly a minute of speech.
 const maxRecording = audio.MaxRecording
 
-func main() {
-	version := flag.Bool("version", false, "report the installed and running daemon builds")
-	flag.Parse()
+func runDaemon(args []string) {
+	fs := flag.NewFlagSet("daemon", flag.ExitOnError)
+	version := fs.Bool("version", false, "run against a model directory or ggml file; -version reports the build")
+	fs.Parse(args)
 	if *version {
 		printVersion()
 		return
@@ -52,6 +54,23 @@ func main() {
 	// pressed during startup queues here instead.
 	sigCh := make(chan os.Signal, 8)
 	signal.Notify(sigCh, syscall.SIGUSR1, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGINT)
+
+	// Pre-flight before the log is redirected to a file, so a user who runs
+	// this in a terminal sees why it would not start.
+	ortLib := os.Getenv("ONNXRUNTIME_LIB")
+	if ortLib == "" {
+		log.Fatal("ONNXRUNTIME_LIB must be set")
+	}
+	// Nothing is bundled, so the daemon starts on whichever menu entry was
+	// asked for, or the default. Never download implicitly; say what to type.
+	name := models.Default
+	if fs.NArg() > 0 {
+		name = fs.Arg(0)
+	}
+	modelDir := models.Resolve(name)
+	if err := models.Check(modelDir); err != nil {
+		log.Fatalf("%s is not downloaded. Get it with:\n  diktat model download %s", name, name)
+	}
 
 	if logf, err := os.OpenFile(ipc.LogFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644); err == nil {
 		log.SetOutput(logf)
@@ -66,26 +85,15 @@ func main() {
 	defer os.Remove(ipc.StatusFile)
 	setStatus(statusLoad)
 
-	modelDir := os.Getenv("MOONSHINE_MODEL_DIR")
-	ortLib := os.Getenv("ONNXRUNTIME_LIB")
-	if modelDir == "" || ortLib == "" {
-		log.Fatal("MOONSHINE_MODEL_DIR and ONNXRUNTIME_LIB must be set")
-	}
-
 	cfg, err := config.Load(config.DefaultPath())
 	if err != nil {
 		log.Printf("config: %v (continuing with defaults)", err)
 		cfg = &config.Config{}
 	}
 
-	// An explicit model argument overrides the build's bundled default. A
-	// diktat-model switch deliberately does not persist across a restart: the
-	// daemon always comes back on a known model rather than on whatever a
-	// stale /tmp file says.
-	if flag.NArg() > 0 {
-		modelDir = ipc.ResolveModel(flag.Arg(0))
-	}
-
+	// A `diktat model` switch deliberately does not persist across a restart:
+	// the daemon comes back on a known model rather than on whatever a stale
+	// /tmp file says.
 	model, err := asr.Load(modelDir, ortLib)
 	if err != nil {
 		log.Fatalf("load model: %v", err)

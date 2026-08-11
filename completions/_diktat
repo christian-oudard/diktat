@@ -1,0 +1,53 @@
+#compdef diktat
+
+# Model names come from `diktat model`, so completion tracks the menu rather
+# than a copy of it that drifts.
+_diktat_models() {
+    local -a names
+    names=(${(f)"$(diktat model 2>/dev/null | awk '/ MB /{print ($1 == "*") ? $2 : $1}')"})
+    _describe 'model' names
+}
+
+_diktat() {
+    local -a commands
+    commands=(
+        'daemon:hold the model in memory and transcribe on toggle'
+        'toggle:start or stop recording'
+        'repeat:type the last transcription again'
+        'model:show, switch, or download models'
+        'record:capture a WAV from the mic, with a level meter'
+        'transcribe:transcribe WAV files offline'
+    )
+
+    _arguments -C '1: :->command' '*:: :->args'
+
+    case $state in
+    command)
+        _describe 'command' commands
+        ;;
+    args)
+        case $words[1] in
+        model)
+            if (( CURRENT == 2 )); then
+                _alternative \
+                    'models:model:_diktat_models' \
+                    'subcommands:subcommand:((download\:"fetch a model into the cache"))'
+            elif [[ $words[2] == download ]]; then
+                _diktat_models
+            fi
+            ;;
+        daemon)
+            _diktat_models
+            ;;
+        transcribe)
+            _arguments '-raw[skip normalization]' '-model[model to use]:model:_diktat_models' '*:wav file:_files -g "*.wav"'
+            ;;
+        record)
+            _files -g '*.wav'
+            ;;
+        esac
+        ;;
+    esac
+}
+
+_diktat "$@"

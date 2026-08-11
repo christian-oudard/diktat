@@ -10,7 +10,7 @@ import (
 	"github.com/christian-oudard/diktat/internal/output"
 )
 
-func main() {
+func runRepeat(args []string) {
 	raw, err := os.ReadFile(ipc.LastTextFile)
 	if err != nil {
 		if os.IsNotExist(err) {

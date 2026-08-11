@@ -18,10 +18,10 @@ import (
 	"github.com/christian-oudard/diktat/internal/wav"
 )
 
-func main() {
+func runRecord(args []string) {
 	out := "recording.wav"
-	if len(os.Args) > 1 {
-		out = os.Args[1]
+	if len(args) > 0 {
+		out = args[0]
 	}
 
 	rec, err := audio.NewRecorder()
