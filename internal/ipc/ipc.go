@@ -14,6 +14,11 @@ const (
 	StatusFile   = "/tmp/diktat-status"
 	LastTextFile = "/tmp/diktat-last"
 	LogFile      = "/tmp/diktat-daemon.log"
+
+	// The audio of the last capture, exactly as handed to the model, so an
+	// utterance that transcribed badly can be replayed through
+	// diktat-transcribe instead of being re-recorded.
+	LastAudioFile = "/tmp/diktat-last.wav"
 )
 
 // ReadPID returns the live daemon's PID, or 0 if there is none.

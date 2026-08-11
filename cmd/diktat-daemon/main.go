@@ -131,10 +131,11 @@ func main() {
 }
 
 type daemon struct {
-	model    *asr.Model
-	recorder *audio.Recorder
-	cfg      *config.Config
-	capTimer *time.Timer
+	model     *asr.Model
+	recorder  *audio.Recorder
+	cfg       *config.Config
+	capTimer  *time.Timer
+	startedAt time.Time
 
 	mu        sync.Mutex
 	recording bool
@@ -147,6 +148,7 @@ func (d *daemon) isRecording() bool {
 }
 
 func (d *daemon) startRecording() {
+	d.startedAt = time.Now()
 	d.recorder.Start()
 	d.mu.Lock()
 	d.recording = true
@@ -170,10 +172,18 @@ func (d *daemon) stopRecording() {
 	}
 
 	setStatus(statusTx)
+	// Before Normalize, which rewrites samples in place.
+	if err := audio.WriteWAV(ipc.LastAudioFile, samples, audio.SampleRate); err != nil {
+		log.Printf("last-audio write: %v", err)
+	}
 	peak, rms := audio.Levels(samples)
 	gain := audio.Normalize(samples)
-	log.Printf("Transcribing %.1fs (peak %.3f rms %.4f gain %.1fx)...",
-		float64(len(samples))/float64(audio.SampleRate), peak, rms, gain)
+	// Audio duration is derived from the sample count at the rate we asked the
+	// device for. If it drifts from the wall clock, the device is not actually
+	// giving us that rate, and the model is seeing time-stretched speech.
+	log.Printf("Transcribing %.1fs (wall %.1fs, peak %.3f rms %.4f gain %.1fx)...",
+		float64(len(samples))/float64(audio.SampleRate), time.Since(d.startedAt).Seconds(),
+		peak, rms, gain)
 
 	t0 := time.Now()
 	text, err := d.model.Transcribe(samples)
