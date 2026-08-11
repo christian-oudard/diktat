@@ -71,6 +71,7 @@
       runtimeDeps = [
         pkgs.wtype
         pkgs.wl-clipboard
+        pkgs.whisper-cpp
         pkgs.sway
       ];
       runtimeBin = pkgs.lib.makeBinPath runtimeDeps;
@@ -91,6 +92,7 @@
         vendorHash = null;
         subPackages = [
           "cmd/diktat-daemon"
+          "cmd/diktat-model"
           "cmd/diktat-toggle"
           "cmd/diktat-repeat"
           "cmd/diktat-transcribe"

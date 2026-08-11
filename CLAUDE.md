@@ -18,6 +18,15 @@ time by a resumable curl download in `flake.nix`.
   count in `internal/audio` that does not trust the device's frame rate.
 - `cmd/diktat-toggle/` - sends SIGUSR1 to the running daemon, fails if absent.
 - `cmd/diktat-repeat/` - re-types last transcription.
+- `cmd/diktat-model/` - reports or swaps the daemon's model via SIGHUP. Models
+  stay resident once loaded, so switching back is instant.
+- `internal/asr` - `Backend` is the interface the daemon holds; `asr.Load`
+  picks the implementation from the path. A directory is moonshine, whose
+  layer count, KV head count and head dim are read off the decoder's ONNX
+  input shapes rather than compiled in, so any size loads. A `.bin` is
+  whisper, shelled out to `whisper-cli`.
+- `internal/wav` - WAV read/write, split out from `internal/audio` so `asr`
+  can write whisper's input file without pulling in malgo.
 - `internal/` - shared packages: asr, audio, config, output.
 
 ## Runtime contract
@@ -36,6 +45,8 @@ The wrapper prepends them.
 - `diktat-daemon.pid` - daemon PID
 - `diktat-status` - Pango markup status string
 - `diktat-last` - last transcribed text
+- `diktat-last.wav` - audio of the last capture, pre-normalization
+- `diktat-model` - model directory currently loaded
 - `diktat-daemon.log` - log
 
 ## Build

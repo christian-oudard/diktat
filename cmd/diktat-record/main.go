@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/christian-oudard/diktat/internal/audio"
+	"github.com/christian-oudard/diktat/internal/wav"
 )
 
 func main() {
@@ -50,7 +51,7 @@ loop:
 
 	samples := rec.Stop()
 	fmt.Fprintln(os.Stderr)
-	if err := audio.WriteWAV(out, samples, audio.SampleRate); err != nil {
+	if err := wav.WriteWAV(out, samples, audio.SampleRate); err != nil {
 		log.Fatalf("write wav: %v", err)
 	}
 	fmt.Fprintf(os.Stderr, "Saved %s (%.1fs)\n", out, float64(len(samples))/float64(audio.SampleRate))

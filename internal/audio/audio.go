@@ -9,9 +9,12 @@ import (
 	"time"
 
 	"github.com/gen2brain/malgo"
+
+	"github.com/christian-oudard/diktat/internal/wav"
 )
 
-const SampleRate = 16000
+// SampleRate is 16 kHz mono, what moonshine and whisper both expect.
+const SampleRate = wav.SampleRate
 
 // MaxRecording bounds a single capture. The daemon stops recording on a
 // wall-clock timer, but the buffer is capped by sample count independently,

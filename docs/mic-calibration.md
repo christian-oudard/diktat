@@ -102,3 +102,29 @@ Read the numbers this way: if quiet-but-audible speech (RMS above the floor)
 still transcribes empty after normalization, the target RMS or preprocessing
 needs adjusting. If only loud speech ever works, the mic gain is the problem,
 fix it at step 1.
+
+## 5. Compare ASR engines
+
+If healthy audio still transcribes badly, the model is the suspect, not the
+capture. `scripts/compare-asr.sh` runs the same WAVs through moonshine at two
+sizes and whisper at two sizes, so the comparison is on your voice and your mic
+rather than on a published benchmark:
+
+```
+$ nix develop
+$ ./scripts/compare-asr.sh recording.wav
+```
+
+The daemon saves every capture to `/tmp/diktat-last.wav` before normalization,
+so a bad transcription can be fed straight in without re-recording it.
+
+Extra models are cached under `~/.cache/diktat-asr-compare` and never enter the
+nix build, so the runtime closure stays as it is.
+
+To run the daemon on a different moonshine size, point it at a cached one; the
+architecture is read from the model, so nothing else needs to change:
+
+```
+$ MOONSHINE_MODEL_DIR=~/.cache/diktat-asr-compare/moonshine-base \
+      ./result/bin/diktat-daemon
+```

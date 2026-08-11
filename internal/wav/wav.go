@@ -1,4 +1,4 @@
-package audio
+package wav
 
 import (
 	"bytes"
@@ -7,6 +7,9 @@ import (
 	"math"
 	"os"
 )
+
+// SampleRate is the rate everything in diktat speaks: 16 kHz mono.
+const SampleRate = 16000
 
 // ReadWAV reads an int16-PCM or float32 WAV file and returns its samples as
 // mono float32 in [-1, 1] along with the file's sample rate. Stereo is

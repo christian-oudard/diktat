@@ -1,8 +1,10 @@
-// Package asr runs moonshine-tiny ONNX inference and decodes tokens.
+// Package asr runs moonshine ONNX inference and decodes tokens. The model size
+// is whatever MOONSHINE_MODEL_DIR points at; the architecture is read from it.
 package asr
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -10,15 +12,37 @@ import (
 	ort "github.com/yalue/onnxruntime_go"
 )
 
-// moonshine-tiny architecture.
+// Shared by every moonshine size.
 const (
-	numLayers        = 6
-	numKVHeads       = 8
-	headDim          = 36
-	bosToken   int64 = 1
-	eosToken   int64 = 2
-	maxLen           = 192
+	bosToken int64 = 1
+	eosToken int64 = 2
+	maxLen         = 192
 )
+
+// Backend is a loaded speech recognizer. The daemon holds one and swaps it,
+// so moonshine and whisper are interchangeable at runtime.
+type Backend interface {
+	Transcribe(audio []float32) (string, error)
+	// Arch describes what is loaded, for the log and diktat-model.
+	Arch() string
+	Close()
+}
+
+// Load picks a backend from what the path is: a directory of ONNX files is
+// moonshine, a ggml .bin file is whisper.
+func Load(path, ortLibPath string) (Backend, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsDir() {
+		return LoadModel(path, ortLibPath)
+	}
+	if strings.HasSuffix(path, ".bin") {
+		return LoadWhisper(path)
+	}
+	return nil, fmt.Errorf("%s: not a moonshine directory or a whisper .bin", path)
+}
 
 // Model holds open encoder + decoder sessions and the tokenizer.
 type Model struct {
@@ -29,6 +53,36 @@ type Model struct {
 	decInNames  []string
 	decOutNames []string
 	tok         *Tokenizer
+
+	// Read off the decoder's declared input shapes rather than hardcoded, so
+	// pointing MOONSHINE_MODEL_DIR at a different size just works.
+	numLayers  int
+	numKVHeads int
+	headDim    int
+}
+
+// decoderShape derives the KV-cache geometry from the decoder's inputs. Each
+// layer contributes four past_key_values entries (decoder/encoder x key/value),
+// and each is declared [batch, kvHeads, seq, headDim].
+func decoderShape(decIn []ort.InputOutputInfo) (layers, kvHeads, headDim int, err error) {
+	for _, info := range decIn {
+		if !strings.HasPrefix(info.Name, "past_key_values.") {
+			continue
+		}
+		layers++
+		if kvHeads == 0 {
+			d := info.Dimensions
+			if len(d) != 4 {
+				return 0, 0, 0, fmt.Errorf("%s: want 4 dims, got %v", info.Name, d)
+			}
+			kvHeads, headDim = int(d[1]), int(d[3])
+		}
+	}
+	if layers == 0 || layers%4 != 0 || kvHeads <= 0 || headDim <= 0 {
+		return 0, 0, 0, fmt.Errorf("cannot derive decoder shape: %d kv inputs, %d heads, %d head dim",
+			layers, kvHeads, headDim)
+	}
+	return layers / 4, kvHeads, headDim, nil
 }
 
 var initOnce sync.Once
@@ -80,6 +134,13 @@ func LoadModel(modelDir, ortLibPath string) (*Model, error) {
 		return nil, fmt.Errorf("decoder session: %w", err)
 	}
 
+	layers, kvHeads, headDim, err := decoderShape(decIn)
+	if err != nil {
+		encSess.Destroy()
+		decSess.Destroy()
+		return nil, err
+	}
+
 	tok, err := LoadTokenizer(tokPath)
 	if err != nil {
 		encSess.Destroy()
@@ -95,7 +156,15 @@ func LoadModel(modelDir, ortLibPath string) (*Model, error) {
 		decInNames:  decInNames,
 		decOutNames: decOutNames,
 		tok:         tok,
+		numLayers:   layers,
+		numKVHeads:  kvHeads,
+		headDim:     headDim,
 	}, nil
+}
+
+// Arch describes the loaded model's geometry, for logging which size is live.
+func (m *Model) Arch() string {
+	return fmt.Sprintf("%d layers, %d kv heads, head dim %d", m.numLayers, m.numKVHeads, m.headDim)
 }
 
 // Close releases the sessions.
@@ -166,11 +235,11 @@ func (m *Model) encode(audio []float32) (*ort.Tensor[float32], error) {
 
 func (m *Model) decode(hidden *ort.Tensor[float32]) ([]int64, error) {
 	currentKV := map[string]*ort.Tensor[float32]{}
-	for layer := 0; layer < numLayers; layer++ {
+	for layer := 0; layer < m.numLayers; layer++ {
 		for _, side := range []string{"decoder", "encoder"} {
 			for _, kind := range []string{"key", "value"} {
 				name := fmt.Sprintf("past_key_values.%d.%s.%s", layer, side, kind)
-				t, err := ort.NewEmptyTensor[float32](ort.NewShape(0, numKVHeads, 1, headDim))
+				t, err := ort.NewEmptyTensor[float32](ort.NewShape(0, int64(m.numKVHeads), 1, int64(m.headDim)))
 				if err != nil {
 					destroyAll(currentKV)
 					return nil, err

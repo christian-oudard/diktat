@@ -11,6 +11,7 @@ import (
 
 	"github.com/christian-oudard/diktat/internal/asr"
 	"github.com/christian-oudard/diktat/internal/audio"
+	"github.com/christian-oudard/diktat/internal/wav"
 )
 
 func main() {
@@ -22,14 +23,15 @@ func main() {
 	if modelDir == "" || ortLib == "" {
 		log.Fatal("MOONSHINE_MODEL_DIR and ONNXRUNTIME_LIB must be set")
 	}
-	model, err := asr.LoadModel(modelDir, ortLib)
+	// Accepts a whisper .bin as readily as a moonshine directory.
+	model, err := asr.Load(modelDir, ortLib)
 	if err != nil {
 		log.Fatalf("load model: %v", err)
 	}
 	defer model.Close()
 
 	for _, path := range flag.Args() {
-		samples, rate, err := audio.ReadWAV(path)
+		samples, rate, err := wav.ReadWAV(path)
 		if err != nil {
 			log.Printf("%v", err)
 			continue

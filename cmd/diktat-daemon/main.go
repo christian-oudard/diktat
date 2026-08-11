@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/christian-oudard/diktat/internal/config"
 	"github.com/christian-oudard/diktat/internal/ipc"
 	"github.com/christian-oudard/diktat/internal/output"
+	"github.com/christian-oudard/diktat/internal/wav"
 )
 
 const (
@@ -45,7 +47,7 @@ func main() {
 	// keeps its default disposition and would kill the daemon. A toggle
 	// pressed during startup queues here instead.
 	sigCh := make(chan os.Signal, 8)
-	signal.Notify(sigCh, syscall.SIGUSR1, syscall.SIGTERM, syscall.SIGINT)
+	signal.Notify(sigCh, syscall.SIGUSR1, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGINT)
 
 	if logf, err := os.OpenFile(ipc.LogFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644); err == nil {
 		log.SetOutput(logf)
@@ -72,26 +74,39 @@ func main() {
 		cfg = &config.Config{}
 	}
 
-	model, err := asr.LoadModel(modelDir, ortLib)
+	// An explicit model argument overrides the build's bundled default. A
+	// diktat-model switch deliberately does not persist across a restart: the
+	// daemon always comes back on a known model rather than on whatever a
+	// stale /tmp file says.
+	if flag.NArg() > 0 {
+		modelDir = ipc.ResolveModel(flag.Arg(0))
+	}
+
+	model, err := asr.Load(modelDir, ortLib)
 	if err != nil {
 		log.Fatalf("load model: %v", err)
 	}
-	defer model.Close()
+	defer os.Remove(ipc.ModelFile)
 
 	rec, err := audio.NewRecorder()
 	if err != nil {
 		log.Fatalf("audio recorder: %v", err)
 	}
 	defer rec.Close()
-	log.Println("Model loaded, idle.")
-	setStatus("")
 
 	capCh := make(chan struct{}, 1)
 	d := &daemon{
 		model:    model,
+		models:   map[string]asr.Backend{modelDir: model},
 		recorder: rec,
 		cfg:      cfg,
+		modelDir: modelDir,
+		ortLib:   ortLib,
 	}
+	defer d.closeModels()
+	d.publishModel()
+	log.Printf("Model loaded, idle: %s (%s)", modelDir, model.Arch())
+	setStatus("")
 	d.capTimer = time.AfterFunc(maxRecording, func() {
 		select {
 		case capCh <- struct{}{}:
@@ -110,6 +125,8 @@ func main() {
 				} else {
 					d.startRecording()
 				}
+			case syscall.SIGHUP:
+				d.reloadModel()
 			case syscall.SIGTERM, syscall.SIGINT:
 				d.capTimer.Stop()
 				d.mu.Lock()
@@ -131,14 +148,80 @@ func main() {
 }
 
 type daemon struct {
-	model     *asr.Model
+	model asr.Backend
+	// Every model loaded this session, kept resident so switching back to one
+	// already seen is instant.
+	models    map[string]asr.Backend
 	recorder  *audio.Recorder
 	cfg       *config.Config
 	capTimer  *time.Timer
 	startedAt time.Time
+	modelDir  string
+	ortLib    string
 
 	mu        sync.Mutex
 	recording bool
+}
+
+func (d *daemon) publishModel() {
+	if err := os.WriteFile(ipc.ModelFile, []byte(d.modelDir), 0644); err != nil {
+		log.Printf("model publish: %v", err)
+	}
+}
+
+// reloadModel swaps in the model named in ipc.ModelFile. Models stay resident
+// once loaded, so switching back and forth costs nothing after the first load.
+// Recording is not interrupted: the capture buffer is independent of the model,
+// so a swap while armed just means the new model transcribes what was captured.
+func (d *daemon) reloadModel() {
+	raw, err := os.ReadFile(ipc.ModelFile)
+	if err != nil {
+		log.Printf("model reload: %v", err)
+		return
+	}
+	dir := strings.TrimSpace(string(raw))
+	if dir == d.modelDir {
+		log.Printf("Already using %s", dir)
+		return
+	}
+
+	if model, ok := d.models[dir]; ok {
+		d.model, d.modelDir = model, dir
+		log.Printf("Model now %s (%s), already resident", dir, model.Arch())
+		d.restoreStatus()
+		return
+	}
+
+	setStatus(statusLoad)
+	t0 := time.Now()
+	model, err := asr.Load(dir, d.ortLib)
+	if err != nil {
+		// Keep serving with the model we have, and put the file back so it
+		// keeps describing what is actually loaded.
+		log.Printf("model reload %s: %v", dir, err)
+		d.publishModel()
+		d.restoreStatus()
+		return
+	}
+	d.models[dir] = model
+	d.model, d.modelDir = model, dir
+	log.Printf("Model now %s (%s) in %s, %d resident",
+		dir, model.Arch(), time.Since(t0).Round(time.Millisecond), len(d.models))
+	d.restoreStatus()
+}
+
+func (d *daemon) closeModels() {
+	for _, m := range d.models {
+		m.Close()
+	}
+}
+
+func (d *daemon) restoreStatus() {
+	if d.isRecording() {
+		setStatus(statusRec)
+		return
+	}
+	setStatus("")
 }
 
 func (d *daemon) isRecording() bool {
@@ -173,7 +256,7 @@ func (d *daemon) stopRecording() {
 
 	setStatus(statusTx)
 	// Before Normalize, which rewrites samples in place.
-	if err := audio.WriteWAV(ipc.LastAudioFile, samples, audio.SampleRate); err != nil {
+	if err := wav.WriteWAV(ipc.LastAudioFile, samples, audio.SampleRate); err != nil {
 		log.Printf("last-audio write: %v", err)
 	}
 	peak, rms := audio.Levels(samples)
