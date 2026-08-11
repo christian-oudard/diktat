@@ -293,7 +293,10 @@ func (d *daemon) stopRecording() {
 		setStatus("")
 		return
 	}
-	log.Printf("Transcribed in %s: %q", time.Since(t0), text)
+	// The text itself is deliberately not logged: the log is a long-lived file
+	// in /tmp and everything dictated would accumulate in it. Length is enough
+	// to tell "heard nothing" from "heard something" when reading the log.
+	log.Printf("Transcribed in %s: %d chars", time.Since(t0), len(text))
 
 	if text != "" {
 		out := text + " "
