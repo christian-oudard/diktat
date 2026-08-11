@@ -25,6 +25,7 @@ static int diktat_full(struct whisper_context *ctx, float *samples, int n, int t
     p.print_timestamps  = false;
     p.print_special     = false;
     p.suppress_blank    = true;
+    p.suppress_nst      = true;   // no [BLANK_AUDIO], (music), and friends
     return whisper_full(ctx, p, samples, n);
 }
 
@@ -52,6 +53,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -135,5 +137,31 @@ func (w *Whisper) Transcribe(audio []float32) (string, error) {
 	for i := C.int(0); i < C.whisper_full_n_segments(w.ctx); i++ {
 		b.WriteString(C.GoString(C.whisper_full_get_segment_text(w.ctx, i)))
 	}
-	return strings.TrimSpace(strings.Join(strings.Fields(b.String()), " ")), nil
+	return dropAnnotations(b.String()), nil
 }
+
+// dropAnnotations removes whisper's non-speech markers. Even with suppress_nst
+// it still emits things like [BLANK_AUDIO], (wind blowing) or a bare musical
+// note for audio it hears no words in. Moonshine returns an empty string for
+// the same input, and the daemon only skips typing on empty, so without this a
+// silent capture types "[BLANK_AUDIO]" into whatever has focus.
+func dropAnnotations(text string) string {
+	var kept []string
+	for _, field := range strings.Fields(text) {
+		kept = append(kept, field)
+	}
+	out := strings.Join(kept, " ")
+	for {
+		trimmed := annotation.ReplaceAllString(out, "")
+		trimmed = strings.TrimSpace(strings.Join(strings.Fields(trimmed), " "))
+		if trimmed == out {
+			break
+		}
+		out = trimmed
+	}
+	return out
+}
+
+// Bracketed or parenthesised asides, and the note glyphs whisper uses for
+// music. Deliberately not anchored: an annotation can sit beside real speech.
+var annotation = regexp.MustCompile(`\[[^\]]*\]|\([^)]*\)|[♪♫]`)
