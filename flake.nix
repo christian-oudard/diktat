@@ -17,6 +17,14 @@
       ];
       runtimeBin = pkgs.lib.makeBinPath runtimeDeps;
 
+      # The encoder runs on a padded 30 second window whatever the utterance
+      # length, so it dominates transcription time: ~510ms on 22 CPU threads
+      # against ~9ms on a laptop RTX 4070. Vulkan rather than CUDA because it
+      # is in the binary cache, needs no unfree toolchain, and covers Intel and
+      # AMD too. With no Vulkan device ggml says "no GPU found" and falls back
+      # to CPU, so this is safe on machines without a usable one.
+      whisper = pkgs.whisper-cpp.override { vulkanSupport = true; };
+
       # miniaudio dlopens these by SONAME at runtime.
       audioInputs = [
         pkgs.alsa-lib
@@ -55,14 +63,14 @@
         ];
         # whisper.cpp is linked in, not shelled out to, so the model stays
         # loaded between utterances.
-        buildInputs = [ pkgs.whisper-cpp ];
+        buildInputs = [ whisper ];
         subPackages = [ "cmd/diktat" ];
         nativeBuildInputs = [ pkgs.makeWrapper ];
         postInstall = ''
           for bin in $out/bin/*; do
             wrapProgram "$bin" \
               --set ONNXRUNTIME_LIB ${pkgs.onnxruntime}/lib/libonnxruntime.so \
-              --set GGML_BACKEND_DIR ${pkgs.whisper-cpp}/lib \
+              --set GGML_BACKEND_DIR ${whisper}/lib \
               --prefix PATH : ${runtimeBin} \
               --suffix LD_LIBRARY_PATH : ${audioLibs}
           done
@@ -74,9 +82,9 @@
       # sets, so the binaries work without going through `nix build`.
       devShells.${system}.default = pkgs.mkShell {
         packages = [ pkgs.go ] ++ runtimeDeps;
-        buildInputs = audioInputs ++ [ pkgs.whisper-cpp ];
+        buildInputs = audioInputs ++ [ whisper ];
         ONNXRUNTIME_LIB = "${pkgs.onnxruntime}/lib/libonnxruntime.so";
-        GGML_BACKEND_DIR = "${pkgs.whisper-cpp}/lib";
+        GGML_BACKEND_DIR = "${whisper}/lib";
         LD_LIBRARY_PATH = audioLibs;
       };
     };

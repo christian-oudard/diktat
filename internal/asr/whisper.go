@@ -8,6 +8,7 @@ package asr
 
 /*
 #cgo LDFLAGS: -lwhisper -lggml -lggml-base
+#include <stdio.h>
 #include <stdlib.h>
 #include <whisper.h>
 #include <ggml-backend.h>
@@ -41,9 +42,46 @@ static void diktat_silence(void) {
     ggml_log_set(diktat_quiet, NULL);
 }
 
-static struct whisper_context *diktat_init(const char *path, int use_gpu) {
+// whisper takes the first device that is a GPU *or* an integrated GPU, so on a
+// hybrid laptop it can land on the Intel chip rather than the discrete card.
+// An iGPU shares memory bandwidth with the CPU it would be replacing and is no
+// clear win, so find the discrete one and pin it. Returns the index in
+// whisper's own numbering, which counts both kinds, or -1 for none.
+static int diktat_discrete_gpu(void) {
+    int index = 0;
+    for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
+        enum ggml_backend_dev_type t = ggml_backend_dev_type(ggml_backend_dev_get(i));
+        if (t == GGML_BACKEND_DEVICE_TYPE_GPU) {
+            return index;
+        }
+        if (t == GGML_BACKEND_DEVICE_TYPE_IGPU) {
+            index++;
+        }
+    }
+    return -1;
+}
+
+// Every device ggml registered, as "name (type)" lines, so a machine with both
+// an integrated and a discrete GPU can be checked at a glance rather than
+// trusted. Types are 0 cpu, 1 gpu, 2 igpu, 3 accel.
+static void diktat_devices(char *out, size_t n) {
+    size_t used = 0;
+    out[0] = '\0';
+    for (size_t i = 0; i < ggml_backend_dev_count() && used + 1 < n; i++) {
+        ggml_backend_dev_t d = ggml_backend_dev_get(i);
+        int w = snprintf(out + used, n - used, "%s%s (type %d)",
+                         used ? ", " : "",
+                         ggml_backend_dev_description(d),
+                         (int)ggml_backend_dev_type(d));
+        if (w < 0) break;
+        used += (size_t)w;
+    }
+}
+
+static struct whisper_context *diktat_init(const char *path, int gpu_device) {
     struct whisper_context_params cp = whisper_context_default_params();
-    cp.use_gpu = use_gpu;
+    cp.use_gpu    = gpu_device >= 0;
+    cp.gpu_device = gpu_device < 0 ? 0 : gpu_device;
     return whisper_init_from_file_with_params(path, cp);
 }
 */
@@ -55,6 +93,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"unsafe"
@@ -84,6 +123,7 @@ type Whisper struct {
 	ctx     *C.struct_whisper_context
 	name    string
 	threads int
+	gpu     bool
 }
 
 // LoadWhisper opens a ggml model and keeps it open.
@@ -96,8 +136,8 @@ func LoadWhisper(modelPath string) (*Whisper, error) {
 	cPath := C.CString(modelPath)
 	defer C.free(unsafe.Pointer(cPath))
 
-	// CPU only for now; GPU backends would be loaded the same way.
-	ctx := C.diktat_init(cPath, C.int(0))
+	device := gpuDevice()
+	ctx := C.diktat_init(cPath, C.int(device))
 	if ctx == nil {
 		return nil, fmt.Errorf("whisper: cannot load %s", modelPath)
 	}
@@ -105,11 +145,41 @@ func LoadWhisper(modelPath string) (*Whisper, error) {
 		ctx:     ctx,
 		name:    strings.TrimSuffix(filepath.Base(modelPath), ".bin"),
 		threads: runtime.NumCPU(),
+		gpu:     device >= 0,
 	}, nil
 }
 
+// gpuDevice is the device index to transcribe on, or -1 to stay on the CPU.
+// DIKTAT_GPU overrides the choice: 0 forces CPU, 1 takes whatever whisper would
+// have picked on its own, including an integrated GPU.
+func gpuDevice() int {
+	if v, err := strconv.ParseBool(os.Getenv("DIKTAT_GPU")); err == nil {
+		if v {
+			return 0
+		}
+		return -1
+	}
+	return int(C.diktat_discrete_gpu())
+}
+
+// Arch names the device, because the difference between GPU and CPU here is
+// two orders of magnitude on the encoder, and falling back is silent. It lists
+// everything ggml found, so picking the wrong chip on a hybrid laptop shows up
+// rather than hiding behind a plain "gpu".
 func (w *Whisper) Arch() string {
-	return fmt.Sprintf("whisper.cpp %s, %d threads", w.name, w.threads)
+	where := fmt.Sprintf("cpu, %d threads", w.threads)
+	if w.gpu {
+		where = "gpu"
+	}
+	return fmt.Sprintf("whisper.cpp %s, %s [%s]", w.name, where, Devices())
+}
+
+// Devices describes every compute device ggml registered.
+func Devices() string {
+	initGGML()
+	var buf [1024]C.char
+	C.diktat_devices(&buf[0], C.size_t(len(buf)))
+	return C.GoString(&buf[0])
 }
 
 func (w *Whisper) Close() {

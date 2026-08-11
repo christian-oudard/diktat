@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/christian-oudard/diktat/internal/asr"
 	"github.com/christian-oudard/diktat/internal/audio"
@@ -35,6 +36,7 @@ func runTranscribe(args []string) {
 		log.Fatalf("load model: %v", err)
 	}
 	defer model.Close()
+	fmt.Println(model.Arch())
 
 	for _, path := range fs.Args() {
 		samples, rate, err := wav.ReadWAV(path)
@@ -51,12 +53,16 @@ func runTranscribe(args []string) {
 		if !*raw {
 			gain = audio.Normalize(samples)
 		}
+		t0 := time.Now()
 		text, err := model.Transcribe(samples)
 		if err != nil {
 			log.Printf("%s: transcribe: %v", path, err)
 			continue
 		}
-		fmt.Printf("%-24s %5.1fs  peak %.3f  rms %.4f  gain %4.1fx  ->  %q\n",
-			path, float64(len(samples))/float64(audio.SampleRate), peak, rms, gain, text)
+		// The first file pays for one-off setup, such as compiling the GPU
+		// shaders, so compare later ones when timing a backend.
+		fmt.Printf("%-24s %5.1fs  peak %.3f  rms %.4f  gain %4.1fx  %6s  ->  %q\n",
+			path, float64(len(samples))/float64(audio.SampleRate), peak, rms, gain,
+			time.Since(t0).Round(time.Millisecond), text)
 	}
 }

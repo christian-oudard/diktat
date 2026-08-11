@@ -107,6 +107,7 @@ func runDaemon(args []string) {
 		ortLib:   ortLib,
 	}
 	defer d.closeModels()
+	warm(model)
 	d.publishModel()
 	log.Printf("Model loaded, idle: %s (%s)", modelDir, model.Arch())
 	setStatus("")
@@ -206,11 +207,25 @@ func (d *daemon) reloadModel() {
 		d.restoreStatus()
 		return
 	}
+	warm(model)
 	d.models[dir] = model
 	d.model, d.modelDir = model, dir
 	log.Printf("Model now %s (%s) in %s, %d resident",
 		dir, model.Arch(), time.Since(t0).Round(time.Millisecond), len(d.models))
 	d.restoreStatus()
+}
+
+// warm runs one throwaway transcription, because loading a model is not the
+// same as being ready to use it: the Vulkan backend defers compiling its
+// shaders to the first encode. The daemon is resident and loads eagerly, so
+// pay that here rather than on the first thing the user says.
+func warm(m asr.Backend) {
+	t0 := time.Now()
+	if _, err := m.Transcribe(make([]float32, audio.SampleRate)); err != nil {
+		log.Printf("warmup: %v", err)
+		return
+	}
+	log.Printf("Warmed up in %s", time.Since(t0).Round(time.Millisecond))
 }
 
 func (d *daemon) closeModels() {
