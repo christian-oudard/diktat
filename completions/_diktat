@@ -15,6 +15,7 @@ _diktat() {
         'toggle:start or stop recording'
         'repeat:type the last transcription again'
         'model:show, switch, or download models'
+        'version:report the build, and whether the daemon matches it'
         'record:capture a WAV from the mic, with a level meter'
         'transcribe:transcribe WAV files offline'
     )

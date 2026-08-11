@@ -127,10 +127,10 @@ The keybinding resolves `diktat` at each press, so a new build takes
 effect on the next press. The daemon keeps the old code in RAM until restarted,
 though. To check which build is live:
 
-    $ diktat daemon -version
+    $ diktat version
 
-This prints the commit it was built from and its store path, and says so when
-the running daemon is a different build. The daemon logs both on startup.
+This prints the commit it was built from and when, and adds a line when the
+running daemon is some other build. The daemon logs the same on startup.
 
 ## Stop the daemon
 

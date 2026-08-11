@@ -9,8 +9,10 @@ time by a resumable curl download in `flake.nix`.
 ## Layout
 
 - `cmd/diktat/` - one binary, one file per subcommand (daemon, toggle,
-  repeat, model, record, transcribe). `main.go` holds the dispatch table,
-  which also backs the zsh completion in `completions/`.
+  repeat, model, version, record, transcribe). `main.go` holds the dispatch
+  table, which also backs the zsh completion in `completions/`. The nix build
+  stamps the revision and commit date in via ldflags; the date uses a `T`
+  rather than a space, since ldflags are joined on spaces.
 - `daemon.go` - keeps the model loaded, toggles
   recording on SIGUSR1, transcribes, types via wtype. Runs for the whole
   session; it never starts recording by itself and never exits by itself.

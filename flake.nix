@@ -29,6 +29,19 @@
       # came from, so stamp the revision in. A dirty tree has no rev, only
       # dirtyShortRev, and a tarball source has neither.
       gitRev = self.shortRev or self.dirtyShortRev or "unknown";
+      # lastModifiedDate is YYYYMMDDHHMMSS; show it the way a person reads it.
+      gitDate =
+        let
+          d = toString (self.lastModifiedDate or "");
+          at = n: len: builtins.substring n len d;
+        in
+        # RFC3339, which has no spaces: ldflags are joined on spaces, so one
+        # here would split the flag. lastModifiedDate is UTC, hence the Z; the
+        # binary converts to local time when printing.
+        if builtins.stringLength d == 14 then
+          "${at 0 4}-${at 4 2}-${at 6 2}T${at 8 2}:${at 10 2}:${at 12 2}Z"
+        else
+          "";
     in
     {
       packages.${system}.default = pkgs.buildGoModule {
@@ -36,7 +49,10 @@
         version = "0.2.0";
         src = ./.;
         vendorHash = null;
-        ldflags = [ "-X main.gitRev=${gitRev}" ];
+        ldflags = [
+          "-X main.gitRev=${gitRev}"
+          "-X main.gitDate=${gitDate}"
+        ];
         # whisper.cpp is linked in, not shelled out to, so the model stays
         # loaded between utterances.
         buildInputs = [ pkgs.whisper-cpp ];

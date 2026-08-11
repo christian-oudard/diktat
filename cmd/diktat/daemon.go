@@ -30,10 +30,6 @@ const (
 	statusTx   = `<span color="#458588">● TX</span>`
 )
 
-// gitRev is stamped in by the nix build via ldflags. The store path alone
-// says whether two builds differ, not which commit either one is.
-var gitRev = "unknown"
-
 // A recording nobody stops would grow the sample buffer forever, and the
 // encoder's cost grows with utterance length, so cut one off and transcribe
 // what we have. audio.MaxRecording is already past what the decoder can emit:
@@ -42,12 +38,7 @@ const maxRecording = audio.MaxRecording
 
 func runDaemon(args []string) {
 	fs := flag.NewFlagSet("daemon", flag.ExitOnError)
-	version := fs.Bool("version", false, "run against a model directory or ggml file; -version reports the build")
 	fs.Parse(args)
-	if *version {
-		printVersion()
-		return
-	}
 
 	// Install handlers before loading the model: until this runs, SIGUSR1
 	// keeps its default disposition and would kill the daemon. A toggle
@@ -331,36 +322,4 @@ func (d *daemon) appendHistory(text string) {
 
 func setStatus(s string) {
 	_ = os.WriteFile(ipc.StatusFile, []byte(s), 0644)
-}
-
-// exePath is the store path of this build, which is what distinguishes one
-// build of diktat from another.
-func exePath() string {
-	path, err := os.Executable()
-	if err != nil {
-		return "unknown"
-	}
-	return path
-}
-
-func printVersion() {
-	installed := exePath()
-	fmt.Printf("commit:    %s\n", gitRev)
-	fmt.Printf("installed: %s\n", installed)
-
-	pid := ipc.ReadPID()
-	if pid == 0 {
-		fmt.Println("running:   no daemon")
-		return
-	}
-	running := ipc.ExePath(pid)
-	if running == installed {
-		fmt.Printf("running:   same build (pid %d)\n", pid)
-		return
-	}
-	// Different store path means a different build, so the commit printed
-	// above describes the installed binary and not the running one.
-	fmt.Printf("running:   %s (pid %d)\n", running, pid)
-	fmt.Println("The running daemon is a different build, so the commit above is not")
-	fmt.Println("what it is running. Restart it with: systemctl --user restart diktat")
 }
