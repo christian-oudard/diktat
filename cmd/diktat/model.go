@@ -37,7 +37,7 @@ func listModels() {
 		if loaded != "" && s.Path() == loaded {
 			state, mark, matched = "downloaded, in-use", "*", true
 		}
-		fmt.Printf("%s %-16s %4d MB  %s\n", mark, s.Name, s.MB, state)
+		fmt.Printf("%s %-28s %5d MB  %s\n", mark, s.Name, s.MB, state)
 	}
 	switch {
 	case loaded == "":

@@ -31,12 +31,29 @@ type Spec struct {
 const Default = "whisper-tiny.en"
 
 // Catalog is the whole menu. Kept short on purpose: these are the ones worth
-// choosing between, not everything upstream publishes.
+// choosing between, not everything upstream publishes. Word error rate is on
+// 300 utterances of LibriSpeech test-other, the noisy split, measured on a
+// discrete GPU; latency is per utterance and flat, since whisper encodes a
+// padded 30 second window whatever was said.
+//
+//	tiny.en                13.4% WER   16ms
+//	base.en                10.3% WER   22ms
+//	small.en                6.7% WER   52ms
+//	large-v3-turbo          4.1% WER  139ms
+//	large-v3-turbo-q5_0     3.8% WER  146ms
+//
+// medium.en and distil-large-v3.5 are left out as dominated: both are larger
+// and slower than large-v3-turbo and score worse. turbo is large-v3 with the
+// decoder distilled from 32 layers to 4, which is why it costs no more than
+// medium despite being a bigger model.
 var Catalog = []Spec{
 	{"moonshine-tiny", Moonshine, "tiny", 106},
 	{"moonshine-base", Moonshine, "base", 238},
 	{"whisper-tiny.en", Whisper, "tiny.en", 75},
 	{"whisper-base.en", Whisper, "base.en", 142},
+	{"whisper-small.en", Whisper, "small.en", 487},
+	{"whisper-large-v3-turbo-q5_0", Whisper, "large-v3-turbo-q5_0", 574},
+	{"whisper-large-v3-turbo", Whisper, "large-v3-turbo", 1624},
 }
 
 // Dir is where downloaded models live.
