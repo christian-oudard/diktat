@@ -13,7 +13,7 @@ bindings; there is no second engine.
 ## Layout
 
 - `cmd/diktat/` - one binary, one file per subcommand (daemon, toggle,
-  repeat, model, version, record, transcribe). `main.go` holds the dispatch
+  repeat, model, version, transcribe). `main.go` holds the dispatch
   table, which also backs the zsh completion in `completions/`. The nix build
   stamps the revision and commit date in via ldflags; the date uses a `T`
   rather than a space, since ldflags are joined on spaces.

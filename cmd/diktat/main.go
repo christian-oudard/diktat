@@ -22,7 +22,6 @@ var commands = []command{
 	{"repeat", "", "Repeat the last transcription, typing the text again.", runRepeat, false},
 	{"model", "[<model>]", "List, switch, or fetch voice transcription models.", runModel, false},
 	{"version", "", "Report the build, and whether the daemon matches it.", runVersion, false},
-	{"record", "[out.wav]", "Capture a WAV from the mic, with a level meter.", runRecord, true},
 	{"transcribe", "[-raw] <wav>...", "Transcribe WAV files offline.", runTranscribe, true},
 }
 

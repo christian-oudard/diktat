@@ -59,15 +59,19 @@ RMS (above ~0.04) points at the model path.
 
 ## 3. Capture a fixed corpus
 
-To iterate on preprocessing without re-recording, capture a reference WAV once.
-`diktat record` captures to `recording.wav` at 16 kHz mono (the daemon's
-capture path) and shows a live level meter so you can confirm the mic produces
-signal before reading. Press Ctrl-C when you finish:
+To iterate on preprocessing without re-recording, capture a reference WAV
+once. The daemon already saves every capture, so dictate through it and keep
+what it wrote:
 
 ```
-$ nix build
-$ diktat record recording.wav
+$ diktat toggle    # read the sentences below, then toggle again
+$ cp /tmp/diktat-last.wav recording.wav
 ```
+
+That file is the audio exactly as the model received it, and the daemon's log
+line reports the levels for it (`peak`, `rms`, and the gain that normalization
+applied), which is what a level meter would have told you. A peak near zero
+means no signal is reaching the capture path, even if system meters look fine.
 
 Read these five phonetically balanced sentences:
 
@@ -77,10 +81,9 @@ Read these five phonetically balanced sentences:
 4. The juice of lemons makes fine punch.
 5. A pod of whales sped past the quiet cove.
 
-Pass a different name to record several takes for comparison. Recording is from
-the default source, so choose the mic first with `wpctl set-default <id>`. A
-flat meter means no signal is reaching the capture path, even if system meters
-look fine.
+Copy it under a different name to keep several takes for comparison. Capture
+is from the default source, so choose the mic first with `wpctl set-default
+<id>`.
 
 Captured `.wav` files are gitignored so voice recordings are never committed.
 

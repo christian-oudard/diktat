@@ -25,8 +25,7 @@ One binary, one subcommand per job. `diktat` with no arguments lists them.
 - `diktat daemon`: long-running process that keeps the model in RAM
 - `diktat toggle`: sends SIGUSR1 to the daemon, which starts or stops recording
 - `diktat repeat`: re-types the last transcription
-- `diktat model`: lists, switches, or downloads models
-- `diktat record`: captures a WAV from the mic, for checking the mic works
+- `diktat model`: lists models, or switches to one, fetching it if needed
 - `diktat transcribe`: runs a model over WAV files offline
 
 The daemon loads the model once at startup and then sits idle, so the first
