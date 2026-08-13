@@ -37,6 +37,8 @@ The daemon can swap models in place, so another model can be judged against
 live dictation without restarting the session:
 
     $ diktat model                    # the menu, then pick one; Enter keeps
+                                      # the vocab column marks which models
+                                      # take vocabulary_hints
     $ diktat model 3                  # or go straight to the third entry
     $ diktat model whisper-tiny.en    # or name it
 

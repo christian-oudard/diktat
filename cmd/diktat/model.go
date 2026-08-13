@@ -67,14 +67,17 @@ func listModels() string {
 		if loaded != "" && s.Path() == loaded {
 			state, mark, inUse = "downloaded, in-use", "*", s.Name
 		}
-		fmt.Printf("%s %d %-28s %5d MB  %s\n", mark, i+1, s.Name, s.MB, state)
+		vocab := "     "
+		if s.Vocab {
+			vocab = "vocab"
+		}
+		fmt.Printf("%s %d %-28s %5d MB  %s  %s\n", mark, i+1, s.Name, s.MB, vocab, state)
 	}
-	switch {
-	case loaded == "":
-		fmt.Println("\nno daemon running")
-	case inUse == "":
-		// A daemon can be on a path outside the menu, including one from an
-		// older build. Say so rather than showing no marker at all.
+	// Whether a daemon is up no longer changes what choosing a model does, so
+	// its absence is not worth reporting. A daemon on a path outside the menu
+	// still is: there would otherwise be no marker anywhere and no way to
+	// tell what is loaded.
+	if loaded != "" && inUse == "" {
 		fmt.Printf("\nloaded: %s\n", loaded)
 	}
 	return inUse

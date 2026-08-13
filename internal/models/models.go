@@ -19,6 +19,12 @@ type Spec struct {
 	quant string
 	// MB is the download size, so the menu can show the cost of fetching one.
 	MB int
+	// Vocab says the family takes vocabulary hints, which are whisper's
+	// initial prompt. Architectural rather than per-file, so it is recorded
+	// here instead of loading every model to ask: the menu has to answer
+	// before anything is downloaded. TestVocabMatchesLibrary checks it
+	// against the library for whatever is present.
+	Vocab bool
 }
 
 // Default is what the daemon loads when not told otherwise. Still whisper,
@@ -60,17 +66,23 @@ const Default = "whisper-tiny.en"
 // only place the crossover is reachable. One whisper stays for the languages
 // the others lack.
 //
+// Only whisper takes vocabulary hints, which is its remaining argument here:
+// it is the one architecture with a prompt to condition on, so it is the only
+// way to bias the decode toward jargon the model would otherwise mangle.
+// Voxtral advertises the same capability but ships no run extension to carry
+// a prompt through, so it cannot be used for this.
+//
 // moonshine-tiny is the floor: worth it only where nothing else fits.
 // granite is the ceiling, and the only entry big enough to need the cache
 // budget to evict something first.
 var Catalog = []Spec{
-	{"moonshine-tiny", "Q8_0", 35},
-	{"whisper-tiny.en", "Q5_K_M", 44},
-	{"parakeet-tdt_ctc-110m", "Q5_K_M", 101},
-	{"parakeet-tdt-0.6b-v2", "Q5_K_M", 539},
-	{"whisper-large-v3-turbo", "Q5_K_M", 619},
-	{"canary-1b-flash", "Q5_K_M", 769},
-	{"granite-speech-4.1-2b-nar", "Q5_K_M", 1782},
+	{"moonshine-tiny", "Q8_0", 35, false},
+	{"whisper-tiny.en", "Q5_K_M", 44, true},
+	{"parakeet-tdt_ctc-110m", "Q5_K_M", 101, false},
+	{"parakeet-tdt-0.6b-v2", "Q5_K_M", 539, false},
+	{"whisper-large-v3-turbo", "Q5_K_M", 619, true},
+	{"canary-1b-flash", "Q5_K_M", 769, false},
+	{"granite-speech-4.1-2b-nar", "Q5_K_M", 1782, false},
 }
 
 // Dir is where downloaded models live.
