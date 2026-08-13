@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 )
 
 // hfOrg publishes the GGUF conversion of every model in the menu, one repo
@@ -13,8 +15,8 @@ import (
 const hfOrg = "https://huggingface.co/handy-computer"
 
 // Download fetches a menu entry into the cache and returns where it landed.
-// Files already present are left alone, so re-running is cheap. Downloads are
-// never implicit: something has to ask for this by name.
+// Files already present are left alone, so re-running is cheap. Nothing here
+// downloads on its own: a caller has to ask for a model by name.
 func Download(name string, progress io.Writer) (string, error) {
 	spec, ok := Lookup(name)
 	if !ok {
@@ -33,7 +35,6 @@ func get(url, dest string, progress io.Writer) error {
 		fmt.Fprintf(progress, "have     %s\n", filepath.Base(dest))
 		return nil
 	}
-	fmt.Fprintf(progress, "fetching %s\n", filepath.Base(dest))
 
 	resp, err := http.Get(url)
 	if err != nil {
@@ -51,14 +52,92 @@ func get(url, dest string, progress io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(f, resp.Body); err != nil {
+	bar := newProgress(progress, filepath.Base(dest), resp.ContentLength)
+	if _, err := io.Copy(f, io.TeeReader(resp.Body, bar)); err != nil {
 		f.Close()
 		os.Remove(tmp)
 		return err
 	}
+	bar.done()
 	if err := f.Close(); err != nil {
 		os.Remove(tmp)
 		return err
 	}
 	return os.Rename(tmp, dest)
+}
+
+// progress draws a download's state on one rewritten line. The models run to
+// a couple of gigabytes over a home connection, so a silent wait of several
+// minutes reads as a hang.
+type progress struct {
+	w     io.Writer
+	name  string
+	total int64 // -1 when the server sent no length
+
+	got     int64
+	started time.Time
+	last    time.Time
+	// tty says whether the line can be rewritten. A log file or a pipe gets
+	// one line at the end instead of thousands of redraws.
+	tty bool
+}
+
+func newProgress(w io.Writer, name string, total int64) *progress {
+	now := time.Now()
+	p := &progress{w: w, name: name, total: total, started: now, last: now, tty: isTerminal(w)}
+	if !p.tty {
+		fmt.Fprintf(w, "fetching %s\n", name)
+	}
+	return p
+}
+
+func (p *progress) Write(b []byte) (int, error) {
+	p.got += int64(len(b))
+	// 20 Hz is smooth to read and costs nothing next to the download.
+	if p.tty && time.Since(p.last) >= 50*time.Millisecond {
+		p.last = time.Now()
+		p.draw()
+	}
+	return len(b), nil
+}
+
+func (p *progress) done() {
+	if p.tty {
+		p.draw()
+		fmt.Fprintln(p.w)
+		return
+	}
+	fmt.Fprintf(p.w, "fetched  %s (%s in %s)\n",
+		p.name, megabytes(p.got), time.Since(p.started).Round(time.Second))
+}
+
+func (p *progress) draw() {
+	rate := ""
+	if secs := time.Since(p.started).Seconds(); secs > 0.5 {
+		rate = fmt.Sprintf("  %.1f MB/s", float64(p.got)/secs/1e6)
+	}
+	// No length means no bar and no percentage; show what has arrived.
+	if p.total <= 0 {
+		fmt.Fprintf(p.w, "\r\033[K%s  %s%s", p.name, megabytes(p.got), rate)
+		return
+	}
+	const width = 24
+	frac := float64(p.got) / float64(p.total)
+	filled := int(frac * width)
+	bar := strings.Repeat("=", filled) + strings.Repeat(" ", width-filled)
+	fmt.Fprintf(p.w, "\r\033[K%s  [%s] %3.0f%%  %s / %s%s",
+		p.name, bar, frac*100, megabytes(p.got), megabytes(p.total), rate)
+}
+
+func megabytes(n int64) string { return fmt.Sprintf("%.0f MB", float64(n)/1e6) }
+
+// isTerminal reports whether w is a character device, which is what makes
+// rewriting a line with \r sensible.
+func isTerminal(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := f.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }

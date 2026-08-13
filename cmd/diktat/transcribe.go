@@ -23,7 +23,7 @@ func runTranscribe(args []string) {
 
 	modelPath := models.Resolve(*name)
 	if err := models.Check(modelPath); err != nil {
-		log.Fatalf("%s is not downloaded. Get it with:\n  diktat model download %s", *name, *name)
+		log.Fatalf("%s is not downloaded. Get it with:\n  diktat model %s", *name, *name)
 	}
 	model, err := asr.Load(modelPath)
 	if err != nil {

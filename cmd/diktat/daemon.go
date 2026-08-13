@@ -62,7 +62,7 @@ func runDaemon(args []string) {
 	}
 	modelDir := models.Resolve(name)
 	if err := models.Check(modelDir); err != nil {
-		log.Fatalf("%s is not downloaded. Get it with:\n  diktat model download %s", name, name)
+		log.Fatalf("%s is not downloaded. Get it with:\n  diktat model %s", name, name)
 	}
 
 	if logf, err := os.OpenFile(ipc.LogFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644); err == nil {

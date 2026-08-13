@@ -4,7 +4,9 @@
 # than a copy of it that drifts.
 _diktat_models() {
     local -a names
-    names=(${(f)"$(diktat model 2>/dev/null | awk '/ MB /{print ($1 == "*") ? $2 : $1}')"})
+    # The listing is "[*] <n> <name> <size> MB <state>"; the marker column
+    # is present only for the model in use, so key off it.
+    names=(${(f)"$(diktat model 2>/dev/null | awk '/ MB /{print ($1 == "*") ? $3 : $2}')"})
     _describe 'model' names
 }
 
@@ -31,8 +33,7 @@ _diktat() {
         model)
             if (( CURRENT == 2 )); then
                 _alternative \
-                    'models:model:_diktat_models' \
-                    'subcommands:subcommand:((download\:"fetch a model into the cache"))'
+                    'models:model:_diktat_models'
             elif [[ $words[2] == download ]]; then
                 _diktat_models
             fi

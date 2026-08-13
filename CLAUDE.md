@@ -26,8 +26,10 @@ bindings; there is no second engine.
   60s, since memory grows with utterance length and the daemon is resident.
   The cap is enforced twice: a wall-clock timer in the daemon, and a sample
   count in `internal/audio` that does not trust the device's frame rate.
-- `model.go` - lists, switches (via SIGHUP), or downloads models. Models stay
-  resident once loaded, so switching back is instant.
+- `model.go` - lists the menu, or switches to an entry by number, by name or
+  by path (via SIGHUP), fetching it first if the cache lacks it. There is no
+  separate download verb: naming a model is the only reason to want one, and
+  the prompt keeps the fetch from being silent.
 - `internal/models` - the menu. Six entries, none bundled: everything is
   downloaded into `~/.cache/diktat/models` from the `handy-computer` GGUF
   repos, so no model is a special case. Downloads are never implicit. The
@@ -50,7 +52,7 @@ the wrapper sets no library-path variables of its own beyond the audio and
 Vulkan loaders it needs at runtime.
 
 Models are not part of the build; they are fetched at runtime into the user's
-cache by `diktat model download`.
+cache by `diktat model <name>`, which asks before fetching.
 
 External CLIs expected on PATH: `wtype`, `wl-copy`, `wl-paste`, `swaymsg`.
 
@@ -107,7 +109,7 @@ keeping exactly one model rather than to keeping none.
 
 ```
 nix build
-./result/bin/diktat model download whisper-tiny.en
+./result/bin/diktat model whisper-tiny.en
 ./result/bin/diktat daemon
 ```
 

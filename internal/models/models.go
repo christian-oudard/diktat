@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -93,12 +94,18 @@ func (s Spec) Downloaded() bool {
 	return Check(s.Path()) == nil
 }
 
-// Lookup finds a menu entry by name.
-func Lookup(name string) (Spec, bool) {
+// Lookup finds a menu entry by name, or by its position in the menu counting
+// from 1. The names run to twenty-odd characters and the menu is short, so
+// the number is what anyone switching models by hand will reach for. Names
+// are matched first, so a model named for a number would still win.
+func Lookup(nameOrNumber string) (Spec, bool) {
 	for _, s := range Catalog {
-		if s.Name == name {
+		if s.Name == nameOrNumber {
 			return s, true
 		}
+	}
+	if n, err := strconv.Atoi(nameOrNumber); err == nil && n >= 1 && n <= len(Catalog) {
+		return Catalog[n-1], true
 	}
 	return Spec{}, false
 }

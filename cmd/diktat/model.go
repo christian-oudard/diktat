@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"log"
 	"os"
@@ -12,24 +13,24 @@ import (
 	"github.com/christian-oudard/diktat/internal/models"
 )
 
-// runModel: bare lists the menu, a name switches to it, download fetches.
+// runModel: bare lists the menu, anything else switches to that model,
+// fetching it first if it is not in the cache yet.
 func runModel(args []string) {
 	log.SetFlags(0)
-	switch {
-	case len(args) == 0:
+	if len(args) == 0 {
 		listModels()
-	case args[0] == "download":
-		downloadModel(args[1:])
-	default:
-		switchModel(args[0])
+		return
 	}
+	switchModel(args[0])
 }
 
-// listModels keeps the name in the first column so completion can read it.
+// listModels numbers the menu, since the names are long and switching by
+// hand is the common case. The name stays in a fixed column so completion
+// can read it.
 func listModels() {
 	loaded := loadedModel()
 	matched := false
-	for _, s := range models.Catalog {
+	for i, s := range models.Catalog {
 		state, mark := "not downloaded", " "
 		if s.Downloaded() {
 			state = "downloaded"
@@ -37,7 +38,7 @@ func listModels() {
 		if loaded != "" && s.Path() == loaded {
 			state, mark, matched = "downloaded, in-use", "*", true
 		}
-		fmt.Printf("%s %-28s %5d MB  %s\n", mark, s.Name, s.MB, state)
+		fmt.Printf("%s %d %-28s %5d MB  %s\n", mark, i+1, s.Name, s.MB, state)
 	}
 	switch {
 	case loaded == "":
@@ -61,30 +62,36 @@ func loadedModel() string {
 	return strings.TrimSpace(string(raw))
 }
 
-func downloadModel(args []string) {
-	if len(args) == 0 {
-		log.Fatal("usage: diktat model download <model>; the menu is: diktat model")
-	}
-	path, err := models.Download(args[0], os.Stderr)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println(path)
-}
+// switchModel points the daemon at a model, given its menu number, its name,
+// or a path. A menu entry that is not in the cache is offered for download
+// rather than refused, since wanting to use a model is the only reason to
+// name one.
+func switchModel(nameOrNumber string) {
+	path := models.Resolve(nameOrNumber)
+	spec, inMenu := models.Lookup(nameOrNumber)
 
-func switchModel(name string) {
-	// Complain about the name before the daemon: a typo is the likelier
-	// mistake, and it is fixable without starting anything.
-	path := models.Resolve(name)
+	// Sort the model out before the daemon: a typo is the likelier mistake,
+	// and it is fixable without starting anything.
 	if err := models.Check(path); err != nil {
-		if s, ok := models.Lookup(name); ok {
-			log.Fatalf("%s is not downloaded. Get it with:\n  diktat model download %s", s.Name, s.Name)
+		if !inMenu {
+			log.Fatalf("unknown model %q; the menu is: diktat model", nameOrNumber)
 		}
-		log.Fatalf("unknown model %q; the menu is: diktat model", name)
+		if !confirm(fmt.Sprintf("%s is not downloaded. Fetch it now (%d MB)?", spec.Name, spec.MB)) {
+			log.Fatal("cancelled")
+		}
+		p, err := models.Download(spec.Name, os.Stderr)
+		if err != nil {
+			log.Fatal(err)
+		}
+		path = p
 	}
+
 	pid := ipc.ReadPID()
 	if pid == 0 {
-		log.Fatal("no daemon running")
+		// Downloading without a daemon running is a reasonable thing to
+		// want, so report the model rather than failing after fetching it.
+		fmt.Printf("%s is ready; no daemon running\n", path)
+		return
 	}
 	if err := os.WriteFile(ipc.ModelFile, []byte(path), 0644); err != nil {
 		log.Fatalf("write model file: %v", err)
@@ -93,4 +100,22 @@ func switchModel(name string) {
 		log.Fatalf("signal daemon: %v", err)
 	}
 	fmt.Printf("switching to %s (watch %s)\n", path, ipc.LogFile)
+}
+
+// confirm asks before spending someone's bandwidth, since a model runs to a
+// couple of gigabytes. Yes is the default, so nothing to read counts as yes:
+// stdin closed or coming from /dev/null means nobody is there to answer, and
+// naming a model is intent enough on its own.
+func confirm(question string) bool {
+	fmt.Fprintf(os.Stderr, "%s [Y/n] ", question)
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "y")
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "", "y", "yes":
+		return true
+	}
+	return false
 }

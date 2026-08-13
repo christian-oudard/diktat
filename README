@@ -8,10 +8,10 @@ Moonshine ONNX voice dictation for Linux/Wayland.
 
 ## Usage
 
-Download a model, run `diktat daemon` for the whole session, and bind
+Fetch a model, run `diktat daemon` for the whole session, and bind
 `diktat toggle` to a key in your Sway config:
 
-    $ diktat model download whisper-tiny.en
+    $ diktat model whisper-tiny.en    # offers to download it
 
     bindsym XF86Favorites exec diktat toggle
 
@@ -38,9 +38,13 @@ does not exit on its own.
 The daemon can swap models in place, so another model can be judged against
 live dictation without restarting the session:
 
-    $ diktat model                    # the menu, and what is loaded
-    $ diktat model download whisper-tiny.en
-    $ diktat model whisper-tiny.en    # switch
+    $ diktat model                    # the numbered menu, and what is loaded
+    $ diktat model 3                  # switch to the third entry
+    $ diktat model whisper-tiny.en    # or name it
+
+Switching to a model that is not in the cache offers to fetch it first, so
+there is nothing to type twice. The menu numbers are the short way in; the
+names are long and the list is short.
 
 Every model is one GGUF file, run through transcribe.cpp linked in process.
 Moonshine and whisper are the same kind of thing to the daemon: which
