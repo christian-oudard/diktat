@@ -54,9 +54,15 @@ func runDaemon(args []string) {
 		log.Printf("config: %v (continuing with defaults)", err)
 		cfg = &config.Config{}
 	}
-	// Nothing is bundled, so the daemon starts on the configured model, or the
-	// default. Never download implicitly; say what to type.
-	name := cfg.Model
+	// Nothing is bundled, so the daemon starts on the last model chosen, then
+	// the configured one, then the default. The choice outranks the config
+	// because it is the more recent instruction from the same person, and it
+	// is cleared by deleting one file. Never download implicitly; say what to
+	// type.
+	name := config.Selected()
+	if name == "" {
+		name = cfg.Model
+	}
 	if name == "" {
 		name = models.Default
 	}

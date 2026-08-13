@@ -9,6 +9,7 @@ import (
 
 	"syscall"
 
+	"github.com/christian-oudard/diktat/internal/config"
 	"github.com/christian-oudard/diktat/internal/ipc"
 	"github.com/christian-oudard/diktat/internal/models"
 )
@@ -115,11 +116,23 @@ func switchModel(nameOrNumber string) {
 		path = p
 	}
 
+	// Remember the choice before acting on it, so it holds whether or not a
+	// daemon is up to hear about it. What gets recorded is the menu name
+	// where there is one, never the menu number, which would mean something
+	// else if the menu were reordered.
+	remembered := nameOrNumber
+	if inMenu {
+		remembered = spec.Name
+	}
+	if err := config.Select(remembered); err != nil {
+		log.Printf("could not remember the choice: %v", err)
+	}
+
 	pid := ipc.ReadPID()
 	if pid == 0 {
-		// Downloading without a daemon running is a reasonable thing to
-		// want, so report the model rather than failing after fetching it.
-		fmt.Printf("%s is ready; no daemon running\n", path)
+		// Choosing a model with no daemon running is a reasonable thing to
+		// want; it is how you set up the next one.
+		fmt.Printf("%s is ready, and is what the daemon will start on\n", remembered)
 		return
 	}
 	if err := os.WriteFile(ipc.ModelFile, []byte(path), 0644); err != nil {

@@ -130,9 +130,11 @@ itself on PATH, `nix profile add .`.
 
 `~/.config/diktat/config.toml` (optional). Keys:
 
-- `model` - model the daemon starts on, default `whisper-tiny.en`.
-  `diktat model` switches the running daemon without writing here, so a
-  restart comes back to a known model.
+- `model` - model the daemon starts on before anything has been chosen,
+  default `whisper-tiny.en`. `diktat model` records its choice in
+  $XDG_STATE_HOME/diktat/model instead of writing here, since this file is
+  hand-authored; that choice outranks this key, and deleting it restores
+  this one.
 - `model_cache_mb` - ceiling on what resident models hold together. 0 takes
   two thirds of the compute device's memory.
 - `paste_methods` - map of sway app_id to paste key combo (`C-v`, `C-S-v`)
