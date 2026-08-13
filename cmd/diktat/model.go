@@ -131,11 +131,13 @@ func switchModel(nameOrNumber string) {
 		log.Printf("could not remember the choice: %v", err)
 	}
 
+	fmt.Printf("using %s\n", remembered)
+
+	// A daemon that is up gets told; one that is not will read the choice when
+	// it starts. Either way the answer to "which model" is the same, so which
+	// of the two happened is not worth saying.
 	pid := ipc.ReadPID()
 	if pid == 0 {
-		// Choosing a model with no daemon running is a reasonable thing to
-		// want; it is how you set up the next one.
-		fmt.Printf("%s is ready, and is what the daemon will start on\n", remembered)
 		return
 	}
 	if err := os.WriteFile(ipc.ModelFile, []byte(path), 0644); err != nil {
@@ -144,7 +146,6 @@ func switchModel(nameOrNumber string) {
 	if err := syscall.Kill(pid, syscall.SIGHUP); err != nil {
 		log.Fatalf("signal daemon: %v", err)
 	}
-	fmt.Printf("switching to %s (watch %s)\n", path, ipc.LogFile)
 }
 
 // confirm asks before spending someone's bandwidth, since a model runs to a
