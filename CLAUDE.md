@@ -12,8 +12,8 @@ bindings; there is no second engine.
 
 ## Layout
 
-- `cmd/diktat/` - one binary, one file per subcommand (daemon, toggle,
-  repeat, model, version, transcribe). `main.go` holds the dispatch
+- `cmd/diktat/` - the shipped binary, one file per subcommand (daemon,
+  toggle, repeat, model, version). `main.go` holds the dispatch
   table, which also backs the zsh completion in `completions/`. The nix build
   stamps the revision and commit date in via ldflags; the date uses a `T`
   rather than a space, since ldflags are joined on spaces.
@@ -30,6 +30,11 @@ bindings; there is no second engine.
   by path (via SIGHUP), fetching it first if the cache lacks it. There is no
   separate download verb: naming a model is the only reason to want one, and
   the prompt keeps the fetch from being silent.
+- `cmd/transcribe/` - runs the daemon's pipeline over WAV files, for
+  comparing models on fixed audio. The flake's `subPackages` builds only
+  `cmd/diktat`, so this is never installed: it is `go run ./cmd/transcribe`
+  in the devShell. Go rather than a script because it has to run the real
+  pipeline, which a script would have to reimplement.
 - `internal/models` - the menu. Six entries, none bundled: everything is
   downloaded into `~/.cache/diktat/models` from the `handy-computer` GGUF
   repos, so no model is a special case. Downloads are never implicit. The
@@ -71,7 +76,7 @@ card. An iGPU shares memory bandwidth with the CPU it would be replacing and is
 no clear win, so `placement` in `internal/asr` walks `transcribe.Devices()` for
 a `DeviceGPU`, skipping `DeviceIGPU`, and pins `LoadOptions.GPUDevice` to its
 index. No discrete device means CPU. `DIKTAT_GPU=0` forces CPU and `=1` takes
-whatever the library would have picked unaided. `diktat transcribe` prints the
+whatever the library would have picked unaided. `cmd/transcribe` prints the
 device it chose, and so does the daemon's startup line.
 
 Loading a model is not the same as being ready to use it: the Vulkan backend

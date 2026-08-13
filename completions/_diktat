@@ -18,7 +18,6 @@ _diktat() {
         'repeat:type the last transcription again'
         'model:show, switch, or download models'
         'version:report the build, and whether the daemon matches it'
-        'transcribe:transcribe WAV files offline'
     )
 
     _arguments -C '1: :->command' '*:: :->args'
@@ -36,9 +35,6 @@ _diktat() {
             elif [[ $words[2] == download ]]; then
                 _diktat_models
             fi
-            ;;
-        transcribe)
-            _arguments '-raw[skip normalization]' '-model[model to use]:model:_diktat_models' '*:wav file:_files -g "*.wav"'
             ;;
         esac
         ;;

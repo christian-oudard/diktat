@@ -89,13 +89,14 @@ Captured `.wav` files are gitignored so voice recordings are never committed.
 
 ## 4. Run the offline pipeline
 
-`diktat transcribe` runs the exact model pipeline on WAV files, so a change
-to preprocessing can be measured against the same audio every time:
+`cmd/transcribe` runs the daemon's own pipeline over WAV files, so a change
+to preprocessing can be measured against the same audio every time. It is not
+installed, so run it from a checkout:
 
 ```
 $ nix build
-$ diktat transcribe recording.wav
-$ diktat transcribe -raw recording.wav
+$ go run ./cmd/transcribe recording.wav
+$ go run ./cmd/transcribe -raw recording.wav
 ```
 
 `-raw` skips normalization, so the two runs show what normalization changes.
@@ -109,13 +110,13 @@ fix it at step 1.
 ## 5. Compare ASR engines
 
 If healthy audio still transcribes badly, the model is the suspect, not the
-capture. `diktat transcribe -model` runs any model in the menu over the same WAVs, so
+capture. `cmd/transcribe -model` runs any model in the menu over the same WAVs, so
 the comparison is on your voice and your mic rather than on a published
 benchmark:
 
 ```
 $ for m in $(diktat model --names); do
-      echo "== $m"; diktat transcribe -model $m recording.wav
+      echo "== $m"; go run ./cmd/transcribe -model $m recording.wav
   done
 ```
 

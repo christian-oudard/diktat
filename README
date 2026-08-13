@@ -26,7 +26,6 @@ One binary, one subcommand per job. `diktat` with no arguments lists them.
 - `diktat toggle`: sends SIGUSR1 to the daemon, which starts or stops recording
 - `diktat repeat`: re-types the last transcription
 - `diktat model`: lists models, or switches to one, fetching it if needed
-- `diktat transcribe`: runs a model over WAV files offline
 
 The daemon loads the model once at startup and then sits idle, so the first
 press records with no delay. It does not start recording on its own, and it
@@ -77,8 +76,10 @@ becomes accuracy per megabyte rather than latency.
 A switch does not persist across a daemon restart; the daemon always comes
 back on the model named in the config, or on the default.
 
-To compare engines on fixed audio instead of live, `diktat transcribe -model`
-runs any of them over the same WAVs. See `docs/mic-calibration.md`.
+To compare models on fixed audio instead of live, `go run ./cmd/transcribe
+-model <name> file.wav` runs any of them over the same WAVs. It is a
+development tool rather than part of the daemon, so it is not installed; run
+it from a checkout. See `docs/mic-calibration.md`.
 
 ## Memory
 

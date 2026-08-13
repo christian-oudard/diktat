@@ -11,18 +11,14 @@ type command struct {
 	usage   string
 	summary string
 	run     func(args []string)
-	// debug commands work but stay out of the usage listing; they are for
-	// diagnosing a microphone, not for dictating.
-	debug bool
 }
 
 var commands = []command{
-	{"daemon", "", "Run the Diktat voice transcription daemon.", runDaemon, false},
-	{"toggle", "", "Start or stop recording.", runToggle, false},
-	{"repeat", "", "Repeat the last transcription, typing the text again.", runRepeat, false},
-	{"model", "[<model>]", "List, switch, or fetch voice transcription models.", runModel, false},
-	{"version", "", "Report the build, and whether the daemon matches it.", runVersion, false},
-	{"transcribe", "[-raw] <wav>...", "Transcribe WAV files offline.", runTranscribe, true},
+	{"daemon", "", "Run the Diktat voice transcription daemon.", runDaemon},
+	{"toggle", "", "Start or stop recording.", runToggle},
+	{"repeat", "", "Repeat the last transcription, typing the text again.", runRepeat},
+	{"model", "[<model>]", "List, switch, or fetch voice transcription models.", runModel},
+	{"version", "", "Report the build, and whether the daemon matches it.", runVersion},
 }
 
 func main() {
@@ -50,9 +46,6 @@ func usage(w *os.File) {
 	fmt.Fprintln(w, "usage: diktat <command> [args]")
 	fmt.Fprintln(w)
 	for _, c := range commands {
-		if c.debug {
-			continue
-		}
 		fmt.Fprintf(w, "  %-7s %-30s %s\n", c.name, c.usage, c.summary)
 	}
 }

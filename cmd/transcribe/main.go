@@ -1,12 +1,22 @@
-// Transcribe runs the Moonshine pipeline on WAV files, for repeatable offline
-// testing of audio preprocessing without re-recording. Pass -raw to skip
-// normalization and see how the model handles the untouched capture.
+// transcribe runs the daemon's own pipeline over WAV files, so a model or a
+// preprocessing change can be measured against fixed audio instead of against
+// a fresh utterance every time. Pass -raw to skip normalization and hear what
+// the model makes of the untouched capture.
+//
+// Deliberately not a diktat subcommand: nothing here is part of dictating, so
+// it is not worth a place in the shipped binary. The flake builds only
+// cmd/diktat, which leaves this to `go run ./cmd/transcribe` inside the
+// devShell. It lives in Go rather than in a script because it has to run the
+// real pipeline, and a script would have to reimplement it.
+//
+//	go run ./cmd/transcribe [-raw] [-model <name>] file.wav...
 package main
 
 import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"github.com/christian-oudard/diktat/internal/asr"
@@ -15,11 +25,11 @@ import (
 	"github.com/christian-oudard/diktat/internal/wav"
 )
 
-func runTranscribe(args []string) {
+func main() {
 	fs := flag.NewFlagSet("transcribe", flag.ExitOnError)
 	raw := fs.Bool("raw", false, "skip normalization")
 	name := fs.String("model", models.Default, "model to transcribe with")
-	fs.Parse(args)
+	fs.Parse(os.Args[1:])
 
 	modelPath := models.Resolve(*name)
 	if err := models.Check(modelPath); err != nil {
