@@ -54,34 +54,46 @@ func askWhich(inUse string) string {
 }
 
 // listModels numbers the menu, since the names are long and switching by
-// hand is the common case. The name stays in a fixed column so completion
-// can read it. It returns the menu name of the model in use, or "".
+// hand is the common case. The name stays in the second column so completion
+// can read it, and the languages go last because that field is the one with
+// no fixed width. It returns the menu name of the model in use, or "".
 func listModels() string {
-	loaded := loadedModel()
+	// What the marker points at: the running daemon's model where there is
+	// one, and otherwise the model a daemon started now would load. Both
+	// answer "which model do I get", which is what the menu is read for, and
+	// with nothing running the second is the only answer there is.
+	current := loadedModel()
+	if current == "" {
+		current = models.Resolve(config.StartModel())
+	}
+
+	fmt.Printf("  %s %-28s %8s  %s  %s  %s\n",
+		"#", "Name", "Size", "Vocab", "Downloaded", "Languages")
 	inUse := ""
 	for i, s := range models.Catalog {
-		state, mark := "not downloaded", " "
-		if s.Downloaded() {
-			state = "downloaded"
+		mark := " "
+		if s.Path() == current {
+			mark, inUse = "*", s.Name
 		}
-		if loaded != "" && s.Path() == loaded {
-			state, mark, inUse = "downloaded, in-use", "*", s.Name
-		}
-		vocab := "     "
-		if s.Vocab {
-			vocab = "vocab"
-		}
-		fmt.Printf("%s %d %-28s %5d MB  %-14s %s  %s\n",
-			mark, i+1, s.Name, s.MB, s.Languages(), vocab, state)
+		fmt.Printf("%s %d %-28s %5d MB  %s  %s  %s\n", mark, i+1, s.Name, s.MB,
+			tick(s.Vocab, "Vocab"), tick(s.Downloaded(), "Downloaded"), s.Languages())
 	}
-	// Whether a daemon is up no longer changes what choosing a model does, so
-	// its absence is not worth reporting. A daemon on a path outside the menu
-	// still is: there would otherwise be no marker anywhere and no way to
-	// tell what is loaded.
-	if loaded != "" && inUse == "" {
-		fmt.Printf("\nloaded: %s\n", loaded)
+	// A model outside the menu gets no marker, so there would otherwise be
+	// nothing anywhere saying what is in use.
+	if inUse == "" {
+		fmt.Printf("\nusing %s\n", current)
 	}
 	return inUse
+}
+
+// tick centres a mark under its header, so a column of them reads as a column
+// rather than trailing off the header's left edge.
+func tick(yes bool, header string) string {
+	if !yes {
+		return strings.Repeat(" ", len(header))
+	}
+	left := (len(header) - 1) / 2
+	return strings.Repeat(" ", left) + "*" + strings.Repeat(" ", len(header)-1-left)
 }
 
 // loadedModel is what the running daemon has, or "" if none is running.

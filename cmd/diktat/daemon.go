@@ -59,18 +59,9 @@ func runDaemon(args []string) {
 		// nothing for two months.
 		log.Printf("config: ignoring unknown key %q", key)
 	}
-	// Nothing is bundled, so the daemon starts on the last model chosen, then
-	// the configured one, then the default. The choice outranks the config
-	// because it is the more recent instruction from the same person, and it
-	// is cleared by deleting one file. Never download implicitly; say what to
-	// type.
-	name := config.Selected()
-	if name == "" {
-		name = cfg.Model
-	}
-	if name == "" {
-		name = models.Default
-	}
+	// Nothing is bundled, and nothing is downloaded implicitly: say what to
+	// type instead.
+	name := config.StartModel()
 	modelDir := models.Resolve(name)
 	if err := models.Check(modelDir); err != nil {
 		log.Fatalf("%s is not downloaded. Get it with:\n  diktat model %s", name, name)
@@ -118,7 +109,7 @@ func runDaemon(args []string) {
 	d.applyVocabulary(model)
 	warm(model)
 	d.publishModel()
-	log.Printf("Model loaded, idle: %s (%s)", modelDir, model.Arch())
+	log.Printf("Model loaded: %s", model.Arch())
 	setStatus("")
 	d.capTimer = time.AfterFunc(maxRecording, func() {
 		select {
@@ -205,7 +196,7 @@ func (d *daemon) reloadModel() {
 	if model, ok := d.models[dir]; ok {
 		d.model, d.modelDir = model, dir
 		d.touch(dir)
-		log.Printf("Model now %s (%s), already resident", dir, model.Arch())
+		log.Printf("Model now %s, already resident", model.Arch())
 		d.restoreStatus()
 		return
 	}
@@ -227,8 +218,8 @@ func (d *daemon) reloadModel() {
 	d.model, d.modelDir = model, dir
 	d.touch(dir)
 	d.evict()
-	log.Printf("Model now %s (%s) in %s, %d resident, %d MB cached",
-		dir, model.Arch(), time.Since(t0).Round(time.Millisecond), len(d.models), d.cached()>>20)
+	log.Printf("Model now %s in %s, %d resident, %d MB cached",
+		model.Arch(), time.Since(t0).Round(time.Millisecond), len(d.models), d.cached()>>20)
 	d.restoreStatus()
 }
 
@@ -240,7 +231,7 @@ func (d *daemon) applyVocabulary(m *asr.Model) {
 		return
 	}
 	if !m.TakesVocabulary() {
-		log.Printf("Vocabulary hints ignored: %s takes no initial prompt", m.Arch())
+		log.Printf("Vocabulary hints ignored: %s takes no initial prompt", m.Name())
 		return
 	}
 	m.SetVocabulary(d.cfg.VocabularyHints)

@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/christian-oudard/diktat/internal/models"
 )
 
 // State is what diktat decided, as opposed to what the user wrote. The config
@@ -37,6 +39,22 @@ func Selected() string {
 		return ""
 	}
 	return strings.TrimSpace(string(raw))
+}
+
+// StartModel is the model a daemon started now would load: the last choice,
+// then the configured one, then the built-in default. The choice outranks the
+// config because it is the more recent instruction from the same person, and
+// it is cleared by deleting one file. The menu asks this too, so that it can
+// mark the model in use when no daemon is running to have loaded one.
+func StartModel() string {
+	if name := Selected(); name != "" {
+		return name
+	}
+	cfg, _, err := Load(DefaultPath())
+	if err == nil && cfg.Model != "" {
+		return cfg.Model
+	}
+	return models.Default
 }
 
 // Select records a model as the one to start with from now on. A failure to

@@ -176,23 +176,27 @@ func placement() (*transcribe.LoadOptions, string, error) {
 		// Index 0 is not selectable explicitly, since zero means auto, but
 		// a device that is first in probe order is what auto picks anyway.
 		if i == 0 {
-			return nil, d.Name, nil
+			return nil, d.Description, nil
 		}
-		return &transcribe.LoadOptions{GPUDevice: i}, d.Name, nil
+		return &transcribe.LoadOptions{GPUDevice: i}, d.Description, nil
 	}
 	return &transcribe.LoadOptions{Backend: transcribe.BackendCPU}, "", nil
 }
 
-// Arch names the model and the device, because the difference between GPU and
-// CPU here is two orders of magnitude on the encoder and falling back is
-// silent. It lists everything the library found, so picking the wrong chip on
-// a hybrid laptop shows up rather than hiding behind a plain "gpu".
+// Name is the model, as the file it was loaded from calls it.
+func (m *Model) Name() string { return m.name }
+
+// Arch names the model and the device it runs on, because the difference
+// between GPU and CPU here is two orders of magnitude on the encoder and
+// falling back is silent. The device is named as the driver describes it, so
+// landing on the wrong chip of a hybrid laptop shows up as that chip rather
+// than hiding behind a plain "gpu".
 func (m *Model) Arch() string {
 	where := "cpu"
 	if m.gpu != "" {
-		where = "gpu " + m.gpu
+		where = m.gpu
 	}
-	return fmt.Sprintf("%s, %s, %d MB [%s]", m.name, where, m.bytes>>20, Devices())
+	return m.name + " on " + where
 }
 
 // DeviceMemory is the total memory of the device transcription runs on, or 0
@@ -215,20 +219,6 @@ func DeviceMemory() uint64 {
 		return 0
 	}
 	return devices[i].MemoryTotal
-}
-
-// Devices describes every compute device the library registered.
-func Devices() string {
-	quiet.Do(func() { transcribe.SetLogHandler(nil) })
-	devices, err := transcribe.Devices()
-	if err != nil {
-		return "unknown"
-	}
-	out := make([]string, 0, len(devices))
-	for _, d := range devices {
-		out = append(out, fmt.Sprintf("%s (%s)", d.Description, d.Type))
-	}
-	return strings.Join(out, ", ")
 }
 
 func (m *Model) Close() {
