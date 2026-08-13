@@ -287,17 +287,49 @@ func cacheBudget(cfg *config.Config) uint64 {
 	return 4 << 30
 }
 
-// warm runs one throwaway transcription, because loading a model is not the
+// warmSeconds is how much audio the warmup pretends to have heard. It wants
+// to be near a real utterance: the models that encode only what they were
+// given build a graph sized to the input, so warming on one second leaves
+// the shapes a real utterance needs still to be compiled, which was the
+// whole point of warming.
+const warmSeconds = 4
+
+// warm runs a throwaway transcription, because loading a model is not the
 // same as being ready to use it: the Vulkan backend defers compiling its
-// shaders to the first encode. The daemon is resident and loads eagerly, so
-// pay that here rather than on the first thing the user says.
+// shaders, and ggml defers allocating its compute buffers, to the first
+// graph run. The daemon is resident and loads eagerly, so pay that here
+// rather than on the first thing the user says.
+//
+// The input is faint noise rather than digital silence, which costs the same
+// (measured: parakeet and whisper both decode silence at full price, so
+// neither skips it) and cannot be skipped by a family that does look for
+// speech before decoding.
 func warm(m *asr.Model) {
 	t0 := time.Now()
-	if _, err := m.Transcribe(make([]float32, audio.SampleRate)); err != nil {
+	if _, err := m.Transcribe(warmupAudio()); err != nil {
 		log.Printf("warmup: %v", err)
 		return
 	}
-	log.Printf("Warmed up in %s", time.Since(t0).Round(time.Millisecond))
+	// Loading allocated the weights; that run allocated the buffers, which
+	// are the larger half. Now is when the model's real cost is knowable.
+	m.Measure()
+	t := m.Timings()
+	log.Printf("Warmed up in %s (encode %s, decode %s), %d MB resident",
+		time.Since(t0).Round(time.Millisecond),
+		t.Encode.Round(time.Millisecond), t.Decode.Round(time.Millisecond),
+		m.Bytes()>>20)
+}
+
+// warmupAudio is quiet broadband noise, loud enough to be audio rather than
+// nothing and far too quiet to be words.
+func warmupAudio() []float32 {
+	buf := make([]float32, warmSeconds*audio.SampleRate)
+	// A cheap deterministic wobble; nothing here needs randomness, and a
+	// fixed pattern keeps one load comparable with the next.
+	for i := range buf {
+		buf[i] = float32((i%17)-8) / 8000
+	}
+	return buf
 }
 
 func (d *daemon) closeModels() {
@@ -368,7 +400,13 @@ func (d *daemon) stopRecording() {
 	// The text itself is deliberately not logged: the log is a long-lived file
 	// in /tmp and everything dictated would accumulate in it. Length is enough
 	// to tell "heard nothing" from "heard something" when reading the log.
-	log.Printf("Transcribed in %s: %d chars", time.Since(t0), len(text))
+	// The breakdown separates the model's own work from everything around
+	// it, which is what tells a slow model from a cold one: a first
+	// utterance that spends its time in encode is still compiling shaders.
+	tm := d.model.Timings()
+	log.Printf("Transcribed in %s (encode %s, decode %s): %d chars",
+		time.Since(t0).Round(time.Millisecond),
+		tm.Encode.Round(time.Millisecond), tm.Decode.Round(time.Millisecond), len(text))
 
 	if text != "" {
 		out := text + " "

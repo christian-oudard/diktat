@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	transcribe "github.com/handy-computer/transcribe.cpp/bindings/go"
 )
@@ -28,9 +29,19 @@ type Model struct {
 	name string
 	// gpu is the device it landed on, or "" for CPU.
 	gpu string
-	// bytes is what loading this model cost on its device, which is what a
-	// cache has to budget against.
-	bytes uint64
+	// bytes is what this model costs on its device, which is what a cache
+	// has to budget against. freeAtLoad is the device's free memory just
+	// before it was loaded, kept so Measure can take the difference later.
+	bytes      uint64
+	freeAtLoad uint64
+	// timings is where the last transcription went.
+	timings Timings
+}
+
+// Timings is where a transcription's time went. Encode dominates for whisper,
+// which runs it over a padded 30 second window however long the utterance.
+type Timings struct {
+	Mel, Encode, Decode time.Duration
 }
 
 // Load opens a GGUF model and keeps it open.
@@ -50,17 +61,44 @@ func Load(path string) (*Model, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", filepath.Base(path), err)
 	}
-	return &Model{
-		s:     s,
-		name:  strings.TrimSuffix(filepath.Base(path), ".gguf"),
-		gpu:   gpu,
-		bytes: footprint(s, before, uint64(info.Size())),
-	}, nil
+	m := &Model{
+		s:          s,
+		name:       strings.TrimSuffix(filepath.Base(path), ".gguf"),
+		gpu:        gpu,
+		bytes:      uint64(info.Size()),
+		freeAtLoad: before,
+	}
+	m.Measure()
+	return m, nil
 }
 
-// Bytes is what this model cost on its device. Measured from the device's
-// free memory where the backend reports it, and otherwise the file size.
+// Bytes is what this model costs on its device: measured against the device's
+// free memory where the backend reports it, and the file size otherwise,
+// which is a floor rather than an estimate.
 func (m *Model) Bytes() uint64 { return m.bytes }
+
+// Timings is where the last transcription's time went.
+func (m *Model) Timings() Timings { return m.timings }
+
+// Measure re-reads what this model costs and keeps the larger answer.
+//
+// Worth calling again after the first transcription: loading allocates the
+// weights, but ggml allocates its compute buffers when it first runs a graph,
+// and on a small model those outweigh the weights several times over. A
+// measurement taken at load alone comes back at about the file size, which is
+// the wrong number to budget a cache against.
+func (m *Model) Measure() {
+	if m.freeAtLoad == 0 {
+		return // the backend reports no memory; the file size stands
+	}
+	dev, err := m.s.Model().Device()
+	if err != nil || dev.MemoryFree == 0 || dev.MemoryFree >= m.freeAtLoad {
+		return
+	}
+	if used := m.freeAtLoad - dev.MemoryFree; used > m.bytes {
+		m.bytes = used
+	}
+}
 
 // deviceFree is free memory on the device a load with these options will
 // land on, or 0 when the backend does not report it.
@@ -77,22 +115,6 @@ func deviceFree(opts *transcribe.LoadOptions) uint64 {
 		return 0
 	}
 	return devices[i].MemoryFree
-}
-
-// footprint is what the load actually consumed. Weights are most of it, but
-// not all: ggml also allocates a context and compute buffers, which on a
-// small model outweigh the weights several times over. So measure the
-// device rather than trusting the file size, and keep the file size as the
-// floor for backends that report no memory at all.
-func footprint(s *transcribe.Session, before, fileSize uint64) uint64 {
-	dev, err := s.Model().Device()
-	if err != nil || before == 0 || dev.MemoryFree == 0 || dev.MemoryFree >= before {
-		return fileSize
-	}
-	if used := before - dev.MemoryFree; used > fileSize {
-		return used
-	}
-	return fileSize
 }
 
 // placement decides where compute runs, and names the device it chose.
@@ -195,6 +217,7 @@ func (m *Model) Transcribe(audio []float32) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	m.timings = Timings{Mel: res.Timings.Mel, Encode: res.Timings.Encode, Decode: res.Timings.Decode}
 	return dropAnnotations(res.Text), nil
 }
 
