@@ -19,7 +19,9 @@ type Spec struct {
 	// quant is the quantization published for this model. Whisper ships a
 	// K-quant, moonshine only Q8_0.
 	quant string
-	// MiB is the download size, so the menu can show the cost of fetching one.
+	// MiB is the download size in mebibytes, so the menu can show the cost
+	// of fetching one. Measured from the published file, not converted from a
+	// decimal figure: the two differ by 5% and the column says MiB.
 	MiB int
 	// Vocab says the family takes vocabulary hints, which are whisper's
 	// initial prompt. Architectural rather than per-file, so it is recorded
@@ -33,12 +35,21 @@ type Spec struct {
 	Langs []string
 }
 
+// listedLangs is how many codes are worth spelling out before a count says
+// more than the list does. Five fits the column; eight does not.
+const listedLangs = 5
+
 // Languages renders the language support for the menu.
 func (s Spec) Languages() string {
-	if len(s.Langs) == 0 {
+	switch {
+	case len(s.Langs) == 0:
 		return "all"
+	case len(s.Langs) <= listedLangs:
+		return strings.Join(s.Langs, " ")
 	}
-	return strings.Join(s.Langs, " ")
+	// Past that, the first code and a count: which eight is not something a
+	// menu column can usefully say, and the model's own card can.
+	return fmt.Sprintf("%s +%d", s.Langs[0], len(s.Langs)-1)
 }
 
 // Default is what the daemon loads when not told otherwise. Still whisper,
@@ -58,6 +69,7 @@ const Default = "whisper-tiny.en"
 //	whisper-large-v3-turbo     7.0% WER   99 languages
 //	canary-1b-flash            5.8% WER   en/de/es/fr, and translation
 //	granite-speech-4.1-2b-nar  4.9% WER   English, no timestamps
+//	Voxtral-Mini-3B-2507       6.0% WER   8 languages, and translation
 //
 // whisper-tiny.en is not on that leaderboard and would place last of these
 // if it were; it stays the default only until the newer models have been
@@ -80,23 +92,26 @@ const Default = "whisper-tiny.en"
 // only place the crossover is reachable. One whisper stays for the languages
 // the others lack.
 //
-// Only whisper takes vocabulary hints, which is its remaining argument here:
-// it is the one architecture with a prompt to condition on, so it is the only
-// way to bias the decode toward jargon the model would otherwise mangle.
-// Voxtral advertises the same capability but ships no run extension to carry
-// a prompt through, so it cannot be used for this.
+// Whisper and voxtral take vocabulary hints, by different mechanisms, and
+// nothing else here does. Whisper conditions its decoder on the words, which
+// is mechanical; voxtral is an audio-LLM and gets them as an instruction it
+// may follow loosely. That whisper can be biased at all is most of its
+// remaining argument in this menu.
 //
 // moonshine-tiny is the floor: worth it only where nothing else fits.
-// granite is the ceiling, and the only entry big enough to need the cache
-// budget to evict something first.
+// granite is the ceiling on accuracy, and voxtral the ceiling on size. Both
+// are big enough that the cache budget will evict something to hold them, and
+// voxtral is here for its languages and its hints rather than its numbers:
+// parakeet-tdt-0.6b-v2 beats it on accuracy at a fifth of the size.
 var Catalog = []Spec{
-	{"moonshine-tiny", "Q8_0", 35, false, []string{"en"}},
-	{"whisper-tiny.en", "Q5_K_M", 44, true, []string{"en"}},
-	{"parakeet-tdt_ctc-110m", "Q5_K_M", 101, false, []string{"en"}},
-	{"parakeet-tdt-0.6b-v2", "Q5_K_M", 539, false, []string{"en"}},
-	{"whisper-large-v3-turbo", "Q5_K_M", 619, true, nil},
-	{"canary-1b-flash", "Q5_K_M", 769, false, []string{"en", "de", "es", "fr"}},
-	{"granite-speech-4.1-2b-nar", "Q5_K_M", 1782, false, []string{"en", "de", "es", "fr", "pt"}},
+	{"moonshine-tiny", "Q8_0", 33, false, []string{"en"}},
+	{"whisper-tiny.en", "Q5_K_M", 42, true, []string{"en"}},
+	{"parakeet-tdt_ctc-110m", "Q5_K_M", 96, false, []string{"en"}},
+	{"parakeet-tdt-0.6b-v2", "Q5_K_M", 514, false, []string{"en"}},
+	{"whisper-large-v3-turbo", "Q5_K_M", 590, true, nil},
+	{"canary-1b-flash", "Q5_K_M", 733, false, []string{"en", "de", "es", "fr"}},
+	{"granite-speech-4.1-2b-nar", "Q5_K_M", 1699, false, []string{"en", "de", "es", "fr", "pt"}},
+	{"Voxtral-Mini-3B-2507", "Q4_K_M", 2846, true, []string{"en", "fr", "de", "es", "it", "pt", "nl", "hi"}},
 }
 
 // Dir is where downloaded models live.
