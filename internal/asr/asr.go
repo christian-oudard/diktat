@@ -37,9 +37,10 @@ type Model struct {
 	// timings is where the last transcription went.
 	timings Timings
 	// vocabulary biases the decode toward words the model would otherwise
-	// get wrong, and takesPrompt says whether this family can use it.
-	vocabulary  string
-	takesPrompt bool
+	// get wrong. promptKind is the extension that carries it for this
+	// family, or 0 when the family has no way to take one.
+	vocabulary string
+	promptKind transcribe.ExtKind
 }
 
 // Timings is where a transcription's time went. Encode dominates for whisper,
@@ -72,10 +73,7 @@ func Load(path string) (*Model, error) {
 		gpu:        gpu,
 		bytes:      uint64(info.Size()),
 		freeAtLoad: before,
-		// Both halves matter: the family has to implement prompting, and
-		// the run slot has to accept the extension that carries it.
-		takesPrompt: mm.Supports(transcribe.FeatureInitialPrompt) &&
-			mm.AcceptsExtension(transcribe.SlotRun, transcribe.KindWhisperRun),
+		promptKind: promptKind(mm),
 	}
 	m.Measure()
 	return m, nil
@@ -100,7 +98,41 @@ func (m *Model) Timings() Timings { return m.timings }
 func (m *Model) SetVocabulary(hints string) { m.vocabulary = strings.TrimSpace(hints) }
 
 // TakesVocabulary reports whether SetVocabulary does anything for this model.
-func (m *Model) TakesVocabulary() bool { return m.takesPrompt }
+func (m *Model) TakesVocabulary() bool { return m.promptKind != 0 }
+
+// promptKind is the run extension this model takes a prompt through, or 0.
+//
+// Two families carry one, by different mechanisms: whisper conditions its
+// decoder on the text, voxtral hands it to a language model as an
+// instruction. Both halves are probed, the capability and the extension that
+// carries it, because voxtral advertised the capability for a while with no
+// extension to deliver it.
+func promptKind(m *transcribe.Model) transcribe.ExtKind {
+	if !m.Supports(transcribe.FeatureInitialPrompt) {
+		return 0
+	}
+	for _, kind := range []transcribe.ExtKind{transcribe.KindWhisperRun, transcribe.KindVoxtralRun} {
+		if m.AcceptsExtension(transcribe.SlotRun, kind) {
+			return kind
+		}
+	}
+	return 0
+}
+
+// promptOptions builds the family's run extension around the hints.
+func (m *Model) promptOptions() transcribe.RunExtension {
+	switch m.promptKind {
+	case transcribe.KindWhisperRun:
+		return &transcribe.WhisperRunOptions{InitialPrompt: m.vocabulary}
+	case transcribe.KindVoxtralRun:
+		// Voxtral takes an instruction rather than prior context, so the
+		// words have to arrive as something to follow.
+		return &transcribe.VoxtralRunOptions{
+			Instruction: "Transcribe the audio. Expected terms: " + m.vocabulary,
+		}
+	}
+	return nil
+}
 
 // Languages are the language codes the model advertises accepting as a hint.
 // Empty means it advertises no set, which is not the same as accepting none.
@@ -236,10 +268,8 @@ func (m *Model) Transcribe(audio []float32) (string, error) {
 		return "", nil
 	}
 	var opts *transcribe.RunOptions
-	if m.vocabulary != "" && m.takesPrompt {
-		opts = &transcribe.RunOptions{
-			Family: &transcribe.WhisperRunOptions{InitialPrompt: m.vocabulary},
-		}
+	if m.vocabulary != "" && m.promptKind != 0 {
+		opts = &transcribe.RunOptions{Family: m.promptOptions()}
 	}
 	res, err := m.s.Run(context.Background(), audio, opts)
 	if err != nil {
