@@ -18,7 +18,9 @@ func runRepeat(args []string) {
 		}
 		log.Fatalf("read last text: %v", err)
 	}
-	cfg, err := config.Load(config.DefaultPath())
+	// Unknown keys are the daemon's business to report; repeat only needs
+	// the paste methods.
+	cfg, _, err := config.Load(config.DefaultPath())
 	if err != nil {
 		cfg = &config.Config{}
 	}

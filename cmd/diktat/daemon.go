@@ -49,10 +49,15 @@ func runDaemon(args []string) {
 
 	// Pre-flight before the log is redirected to a file, so a user who runs
 	// this in a terminal sees why it would not start.
-	cfg, err := config.Load(config.DefaultPath())
+	cfg, unknown, err := config.Load(config.DefaultPath())
 	if err != nil {
 		log.Printf("config: %v (continuing with defaults)", err)
 		cfg = &config.Config{}
+	}
+	for _, key := range unknown {
+		// Silence here is how vocabulary_hints sat in a real config doing
+		// nothing for two months.
+		log.Printf("config: ignoring unknown key %q", key)
 	}
 	// Nothing is bundled, so the daemon starts on the last model chosen, then
 	// the configured one, then the default. The choice outranks the config
@@ -110,6 +115,7 @@ func runDaemon(args []string) {
 		modelDir: modelDir,
 	}
 	defer d.closeModels()
+	d.applyVocabulary(model)
 	warm(model)
 	d.publishModel()
 	log.Printf("Model loaded, idle: %s (%s)", modelDir, model.Arch())
@@ -215,6 +221,7 @@ func (d *daemon) reloadModel() {
 		d.restoreStatus()
 		return
 	}
+	d.applyVocabulary(model)
 	warm(model)
 	d.models[dir] = model
 	d.model, d.modelDir = model, dir
@@ -223,6 +230,21 @@ func (d *daemon) reloadModel() {
 	log.Printf("Model now %s (%s) in %s, %d resident, %d MB cached",
 		dir, model.Arch(), time.Since(t0).Round(time.Millisecond), len(d.models), d.cached()>>20)
 	d.restoreStatus()
+}
+
+// applyVocabulary hands the configured hints to a freshly loaded model, and
+// says so when the family cannot use them: a list that is quietly ignored is
+// worse than no list, since it looks like it is working.
+func (d *daemon) applyVocabulary(m *asr.Model) {
+	if d.cfg.VocabularyHints == "" {
+		return
+	}
+	if !m.TakesVocabulary() {
+		log.Printf("Vocabulary hints ignored: %s takes no initial prompt", m.Arch())
+		return
+	}
+	m.SetVocabulary(d.cfg.VocabularyHints)
+	log.Printf("Vocabulary hints applied (%d chars)", len(d.cfg.VocabularyHints))
 }
 
 // touch records dir as the most recently used model.

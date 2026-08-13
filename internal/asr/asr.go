@@ -36,6 +36,10 @@ type Model struct {
 	freeAtLoad uint64
 	// timings is where the last transcription went.
 	timings Timings
+	// vocabulary biases the decode toward words the model would otherwise
+	// get wrong, and takesPrompt says whether this family can use it.
+	vocabulary  string
+	takesPrompt bool
 }
 
 // Timings is where a transcription's time went. Encode dominates for whisper,
@@ -61,12 +65,17 @@ func Load(path string) (*Model, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", filepath.Base(path), err)
 	}
+	mm := s.Model()
 	m := &Model{
 		s:          s,
 		name:       strings.TrimSuffix(filepath.Base(path), ".gguf"),
 		gpu:        gpu,
 		bytes:      uint64(info.Size()),
 		freeAtLoad: before,
+		// Both halves matter: the family has to implement prompting, and
+		// the run slot has to accept the extension that carries it.
+		takesPrompt: mm.Supports(transcribe.FeatureInitialPrompt) &&
+			mm.AcceptsExtension(transcribe.SlotRun, transcribe.KindWhisperRun),
 	}
 	m.Measure()
 	return m, nil
@@ -79,6 +88,19 @@ func (m *Model) Bytes() uint64 { return m.bytes }
 
 // Timings is where the last transcription's time went.
 func (m *Model) Timings() Timings { return m.timings }
+
+// SetVocabulary biases the decode toward these words: jargon, product names
+// and acronyms that a general model renders as whatever it knows instead.
+// Passed as whisper's initial prompt, which is a nudge rather than a rule, so
+// nothing outside the list becomes unsayable.
+//
+// Only whisper takes it. Everything else in the menu is an encoder-decoder or
+// a transducer with no prompt to condition on, and TakesVocabulary says which
+// is which so a caller can say so rather than wonder why nothing changed.
+func (m *Model) SetVocabulary(hints string) { m.vocabulary = strings.TrimSpace(hints) }
+
+// TakesVocabulary reports whether SetVocabulary does anything for this model.
+func (m *Model) TakesVocabulary() bool { return m.takesPrompt }
 
 // Measure re-reads what this model costs and keeps the larger answer.
 //
@@ -213,7 +235,13 @@ func (m *Model) Transcribe(audio []float32) (string, error) {
 	if len(audio) == 0 {
 		return "", nil
 	}
-	res, err := m.s.Run(context.Background(), audio, nil)
+	var opts *transcribe.RunOptions
+	if m.vocabulary != "" && m.takesPrompt {
+		opts = &transcribe.RunOptions{
+			Family: &transcribe.WhisperRunOptions{InitialPrompt: m.vocabulary},
+		}
+	}
+	res, err := m.s.Run(context.Background(), audio, opts)
 	if err != nil {
 		return "", err
 	}

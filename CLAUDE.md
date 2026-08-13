@@ -140,6 +140,13 @@ itself on PATH, `nix profile add .`.
 - `paste_methods` - map of sway app_id to paste key combo (`C-v`, `C-S-v`)
 - `history_file` - JSONL append target for each transcription
 
-Vocabulary hints are not wired up. Whisper's initial prompt is reachable
-through transcribe.cpp's family extensions, so the capability now exists;
-nothing in diktat uses it yet.
+- `vocabulary_hints` - words the model would otherwise get wrong, passed as
+  whisper's initial prompt. Only the whisper family takes them: it is the one
+  architecture here with a prompt to condition on, which `asr.Model` probes
+  for with `FEATURE_INITIAL_PROMPT` plus acceptance of the whisper run
+  extension. The daemon logs when a loaded model cannot use them, since a
+  list that is silently ignored looks like it is working.
+
+Unknown keys are reported rather than ignored. TOML drops them silently,
+which is how `vocabulary_hints` sat in a real config doing nothing from the
+Python rewrite until it was wired back up.
