@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/christian-oudard/diktat/internal/human"
 )
 
 // hfOrg publishes the GGUF conversion of every model in the menu, one repo
@@ -108,17 +110,17 @@ func (p *progress) done() {
 		return
 	}
 	fmt.Fprintf(p.w, "fetched  %s (%s in %s)\n",
-		p.name, megabytes(p.got), time.Since(p.started).Round(time.Second))
+		p.name, human.Bytes(uint64(p.got)), time.Since(p.started).Round(time.Second))
 }
 
 func (p *progress) draw() {
 	rate := ""
 	if secs := time.Since(p.started).Seconds(); secs > 0.5 {
-		rate = fmt.Sprintf("  %.1f MB/s", float64(p.got)/secs/1e6)
+		rate = fmt.Sprintf("  %.1f MiB/s", float64(p.got)/secs/human.MiB)
 	}
 	// No length means no bar and no percentage; show what has arrived.
 	if p.total <= 0 {
-		fmt.Fprintf(p.w, "\r\033[K%s  %s%s", p.name, megabytes(p.got), rate)
+		fmt.Fprintf(p.w, "\r\033[K%s  %s%s", p.name, human.Bytes(uint64(p.got)), rate)
 		return
 	}
 	const width = 24
@@ -126,10 +128,8 @@ func (p *progress) draw() {
 	filled := int(frac * width)
 	bar := strings.Repeat("=", filled) + strings.Repeat(" ", width-filled)
 	fmt.Fprintf(p.w, "\r\033[K%s  [%s] %3.0f%%  %s / %s%s",
-		p.name, bar, frac*100, megabytes(p.got), megabytes(p.total), rate)
+		p.name, bar, frac*100, human.Bytes(uint64(p.got)), human.Bytes(uint64(p.total)), rate)
 }
-
-func megabytes(n int64) string { return fmt.Sprintf("%.0f MB", float64(n)/1e6) }
 
 // isTerminal reports whether w is a character device, which is what makes
 // rewriting a line with \r sensible.

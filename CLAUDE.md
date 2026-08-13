@@ -52,7 +52,10 @@ bindings; there is no second engine.
   here. Picks the discrete GPU when there is one.
 - `internal/wav` - WAV read/write, split out from `internal/audio` so the
   offline tools can read a clip without pulling in malgo.
-- `internal/` - shared packages: asr, audio, config, output.
+- `internal/` - shared packages: asr, audio, config, human, output. `human`
+  renders sizes in binary units at one precision rule, since the menu, the
+  download progress and the daemon's memory lines all print the same kind of
+  number and were each rounding it differently.
 
 ## Runtime contract
 

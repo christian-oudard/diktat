@@ -20,12 +20,13 @@ _diktat_commands() {
     _describe 'command' commands
 }
 
-# Model names come from `diktat model`, whose listing is
-# "[*] <n> <name> <size> MB <state>". The marker column is there only for the
-# model in use, so key off it.
+# Model names come from `diktat model`, whose listing is a header row and then
+# "[*] <n> <name> <size> ...". A menu row is what starts with the marker column
+# and a number, which the header and the trailing notes do not; the marker
+# itself is there only for the model in use, so it shifts the fields by one.
 _diktat_models() {
     local -a names
-    names=(${(f)"$(diktat model 2>/dev/null | awk '/ MB /{print ($1 == "*") ? $3 : $2}')"})
+    names=(${(f)"$(diktat model 2>/dev/null | awk '/^[* ] [0-9]+ /{print ($1 == "*") ? $3 : $2}')"})
     _describe 'model' names
 }
 

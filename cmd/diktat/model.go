@@ -75,7 +75,7 @@ func listModels() string {
 		if s.Path() == current {
 			mark, inUse = "*", s.Name
 		}
-		fmt.Printf("%s %d %-28s %5d MB  %s  %s  %s\n", mark, i+1, s.Name, s.MB,
+		fmt.Printf("%s %d %-28s %8s  %s  %s  %s\n", mark, i+1, s.Name, s.Size(),
 			tick(s.Vocab, "Vocab"), tick(s.Downloaded(), "Downloaded"), s.Languages())
 	}
 	// A model outside the menu gets no marker, so there would otherwise be
@@ -122,7 +122,7 @@ func switchModel(nameOrNumber string) {
 		if !inMenu {
 			log.Fatalf("unknown model %q; the menu is: diktat model", nameOrNumber)
 		}
-		if !confirm(fmt.Sprintf("%s is not downloaded. Fetch it now (%d MB)?", spec.Name, spec.MB)) {
+		if !confirm(fmt.Sprintf("%s is not downloaded. Fetch it now (%s)?", spec.Name, spec.Size())) {
 			log.Fatal("cancelled")
 		}
 		p, err := models.Download(spec.Name, os.Stderr)

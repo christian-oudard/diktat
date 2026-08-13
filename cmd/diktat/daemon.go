@@ -18,6 +18,7 @@ import (
 	"github.com/christian-oudard/diktat/internal/asr"
 	"github.com/christian-oudard/diktat/internal/audio"
 	"github.com/christian-oudard/diktat/internal/config"
+	"github.com/christian-oudard/diktat/internal/human"
 	"github.com/christian-oudard/diktat/internal/ipc"
 	"github.com/christian-oudard/diktat/internal/models"
 	"github.com/christian-oudard/diktat/internal/output"
@@ -218,8 +219,8 @@ func (d *daemon) reloadModel() {
 	d.model, d.modelDir = model, dir
 	d.touch(dir)
 	d.evict()
-	log.Printf("Model now %s in %s, %d resident, %d MB cached",
-		model.Arch(), time.Since(t0).Round(time.Millisecond), len(d.models), d.cached()>>20)
+	log.Printf("Model now %s in %s, %d resident, %s cached",
+		model.Arch(), time.Since(t0).Round(time.Millisecond), len(d.models), human.Bytes(d.cached()))
 	d.restoreStatus()
 }
 
@@ -283,8 +284,8 @@ func (d *daemon) evict() {
 		sizes[dir] = m.Bytes()
 	}
 	for _, dir := range overBudget(d.lru, sizes, d.budget) {
-		log.Printf("Evicting %s (%d MB), cache over %d MB budget",
-			dir, sizes[dir]>>20, d.budget>>20)
+		log.Printf("Evicting %s (%s), cache over %s budget",
+			dir, human.Bytes(sizes[dir]), human.Bytes(d.budget))
 		d.models[dir].Close()
 		delete(d.models, dir)
 		d.lru = slices.DeleteFunc(d.lru, func(s string) bool { return s == dir })
@@ -333,10 +334,10 @@ func warm(m *asr.Model) {
 	// are the larger half. Now is when the model's real cost is knowable.
 	m.Measure()
 	t := m.Timings()
-	log.Printf("Warmed up in %s (encode %s, decode %s), %d MB resident",
+	log.Printf("Warmed up in %s (encode %s, decode %s), %s resident",
 		time.Since(t0).Round(time.Millisecond),
 		t.Encode.Round(time.Millisecond), t.Decode.Round(time.Millisecond),
-		m.Bytes()>>20)
+		human.Bytes(m.Bytes()))
 }
 
 // warmupAudio is quiet broadband noise, loud enough to be audio rather than

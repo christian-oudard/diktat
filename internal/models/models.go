@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/christian-oudard/diktat/internal/human"
 )
 
 // Spec is one entry in the menu.
@@ -17,8 +19,8 @@ type Spec struct {
 	// quant is the quantization published for this model. Whisper ships a
 	// K-quant, moonshine only Q8_0.
 	quant string
-	// MB is the download size, so the menu can show the cost of fetching one.
-	MB int
+	// MiB is the download size, so the menu can show the cost of fetching one.
+	MiB int
 	// Vocab says the family takes vocabulary hints, which are whisper's
 	// initial prompt. Architectural rather than per-file, so it is recorded
 	// here instead of loading every model to ask: the menu has to answer
@@ -109,6 +111,9 @@ func Dir() string {
 // File is the GGUF's name, which carries the quantization so two quants of
 // one model can sit side by side in the cache.
 func (s Spec) File() string { return fmt.Sprintf("%s-%s.gguf", s.Name, s.quant) }
+
+// Size is the download, for the menu and for the prompt before fetching one.
+func (s Spec) Size() string { return human.Bytes(uint64(s.MiB) << 20) }
 
 // Path is where a menu entry lands once downloaded.
 func (s Spec) Path() string { return filepath.Join(Dir(), s.File()) }
