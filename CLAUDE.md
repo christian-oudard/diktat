@@ -3,7 +3,9 @@
 ## Overview
 
 Voice dictation for Linux/Sway/Wayland. Default model is whisper-tiny.en, run
-on a discrete GPU when there is one. Go binaries built via nix `buildGoModule`.
+on a discrete GPU when there is one. The menu also carries parakeet, canary
+and granite, which beat it on both accuracy and short-utterance latency; the
+default moves once they have been used in anger. Go binaries built via nix `buildGoModule`.
 Models are downloaded on demand into the user's cache, not at build time.
 Speech recognition is transcribe.cpp throughout, linked in through its Go
 bindings; there is no second engine.
@@ -15,8 +17,9 @@ bindings; there is no second engine.
   table, which also backs the zsh completion in `completions/`. The nix build
   stamps the revision and commit date in via ldflags; the date uses a `T`
   rather than a space, since ldflags are joined on spaces.
-- `daemon.go` - keeps the model loaded and warmed, toggles
-  recording on SIGUSR1, transcribes, types via wtype. Runs for the whole
+- `daemon.go` - keeps the model loaded and warmed, bounds the resident set
+  (see Model cache below), toggles recording on SIGUSR1, transcribes, types
+  via wtype. Runs for the whole
   session; it never starts recording by itself and never exits by itself.
   Signal handlers are installed before the model load so a toggle during
   startup is queued rather than killing the process. Recording is capped at
@@ -27,7 +30,11 @@ bindings; there is no second engine.
   resident once loaded, so switching back is instant.
 - `internal/models` - the menu. Six entries, none bundled: everything is
   downloaded into `~/.cache/diktat/models` from the `handy-computer` GGUF
-  repos, so no model is a special case. Downloads are never implicit.
+  repos, so no model is a special case. Downloads are never implicit. The
+  menu leads with parakeet rather than whisper: whisper encodes a padded 30
+  second window whatever was said, so on a 2 second utterance it costs the
+  same as on a 30 second one, while parakeet encodes only what it was
+  given. One whisper stays for the languages the others lack.
 - `internal/asr` - one `Model` over transcribe.cpp. There is no backend
   interface any more: every model is a GGUF and the library reads the
   architecture out of it, so moonshine and whisper are not distinguishable
@@ -74,6 +81,19 @@ The NVIDIA driver keeps compiled shaders in `~/.cache/nvidia/GLCache`, so that
 warmup is ~30ms in the normal case and ~5.8s only when the cache is cold, which
 means once per driver version rather than once per daemon start.
 
+## Model cache
+
+Every model loaded stays resident, so switching back is instant. That needs a
+ceiling now the models are large: the laptop GPU has 8 GB shared with the
+desktop, and ggml's context and compute buffers cost more than the weights do
+for a small model, so nvidia-smi shows ~1.4 GB resident for a 44 MB file.
+
+`asr.Load` measures the cost by reading the device's free memory either side
+of the load, which captures those buffers; a backend reporting no memory
+falls back to the file size. `overBudget` in `daemon.go` picks what to drop,
+oldest first, and never the model in use, so too small a budget degrades to
+keeping exactly one model rather than to keeping none.
+
 ## IPC files (in `/tmp`)
 
 - `diktat-daemon.pid` - daemon PID
@@ -102,9 +122,11 @@ itself on PATH, `nix profile add .`.
 
 `~/.config/diktat/config.toml` (optional). Keys:
 
-- `model` - model the daemon starts on, default `whisper-tiny.en`. `diktat
-  model` switches the running daemon without writing here, so a restart comes
-  back to a known model.
+- `model` - model the daemon starts on, default `whisper-tiny.en`.
+  `diktat model` switches the running daemon without writing here, so a
+  restart comes back to a known model.
+- `model_cache_mb` - ceiling on what resident models hold together. 0 takes
+  two thirds of the compute device's memory.
 - `paste_methods` - map of sway app_id to paste key combo (`C-v`, `C-S-v`)
 - `history_file` - JSONL append target for each transcription
 

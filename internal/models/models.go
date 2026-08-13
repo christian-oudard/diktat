@@ -20,35 +20,56 @@ type Spec struct {
 	MB int
 }
 
-// Default is what the daemon loads when not told otherwise.
+// Default is what the daemon loads when not told otherwise. Still whisper,
+// which the measurements below say is the wrong choice for short utterances,
+// because the default is what gets dictated through every day and the
+// alternatives have not been used in anger yet. Switch it once they have.
 const Default = "whisper-tiny.en"
 
-// Catalog is the whole menu. Kept short on purpose: these are the ones worth
-// choosing between, not everything upstream publishes. Word error rate is on
-// 300 utterances of LibriSpeech test-other, the noisy split, measured on a
-// discrete GPU; latency is per utterance and flat, since whisper encodes a
-// padded 30 second window whatever was said.
+// Catalog is the whole menu: one entry per niche, not everything upstream
+// publishes. WER is the Open ASR Leaderboard average over its eight
+// short-form English sets, which is a better guide for dictation than
+// LibriSpeech alone.
 //
-//	tiny.en                13.4% WER   16ms
-//	base.en                10.3% WER   22ms
-//	small.en                6.7% WER   52ms
-//	large-v3-turbo          4.1% WER  139ms
+//	whisper-tiny.en                       English, the default
+//	parakeet-tdt_ctc-110m      6.6% WER   English
+//	parakeet-tdt-0.6b-v2       5.4% WER   English
+//	whisper-large-v3-turbo     7.0% WER   99 languages
+//	canary-1b-flash            5.8% WER   en/de/es/fr, and translation
+//	granite-speech-4.1-2b-nar  4.9% WER   English, no timestamps
 //
-// medium.en and distil-large-v3.5 are left out as dominated: both are larger
-// and slower than large-v3-turbo and score worse. turbo is large-v3 with the
-// decoder distilled from 32 layers to 4, which is why it costs no more than
-// medium despite being a bigger model.
+// whisper-tiny.en is not on that leaderboard and would place last of these
+// if it were; it stays the default only until the newer models have been
+// lived with, since the default is what gets dictated through every day.
 //
-// Moonshine is here for its shape rather than its accuracy: it encodes only
-// the audio it was given instead of padding to 30 seconds, so on short
-// utterances it is far cheaper than its size suggests.
+// Two shapes of model are here, and the difference matters more than the
+// sizes do. Whisper always encodes a padded 30 second window, so it costs
+// the same whatever was said; the rest encode only the audio they were
+// given. Measured on this laptop's CPU, whisper-tiny.en against
+// parakeet-tdt_ctc-110m:
+//
+//	 2s utterance   1045ms    136ms
+//	 3s utterance    960ms    235ms
+//	30s utterance   2365ms   2335ms
+//	55s utterance   2639ms   4768ms
+//
+// So the flat cost is a liability up to about 30 seconds and an asset past
+// it. Dictation is mostly short utterances, which is why the menu leads with
+// the models that scale with the audio; the 60 second recording cap is the
+// only place the crossover is reachable. One whisper stays for the languages
+// the others lack.
+//
+// moonshine-tiny is the floor: worth it only where nothing else fits.
+// granite is the ceiling, and the only entry big enough to need the cache
+// budget to evict something first.
 var Catalog = []Spec{
 	{"moonshine-tiny", "Q8_0", 35},
-	{"moonshine-base", "Q8_0", 77},
 	{"whisper-tiny.en", "Q5_K_M", 44},
-	{"whisper-base.en", "Q5_K_M", 63},
-	{"whisper-small.en", "Q5_K_M", 193},
+	{"parakeet-tdt_ctc-110m", "Q5_K_M", 101},
+	{"parakeet-tdt-0.6b-v2", "Q5_K_M", 539},
 	{"whisper-large-v3-turbo", "Q5_K_M", 619},
+	{"canary-1b-flash", "Q5_K_M", 769},
+	{"granite-speech-4.1-2b-nar", "Q5_K_M", 1782},
 }
 
 // Dir is where downloaded models live.

@@ -28,11 +28,15 @@ type Model struct {
 	name string
 	// gpu is the device it landed on, or "" for CPU.
 	gpu string
+	// bytes is what loading this model cost on its device, which is what a
+	// cache has to budget against.
+	bytes uint64
 }
 
 // Load opens a GGUF model and keeps it open.
 func Load(path string) (*Model, error) {
-	if _, err := os.Stat(path); err != nil {
+	info, err := os.Stat(path)
+	if err != nil {
 		return nil, fmt.Errorf("model: %w", err)
 	}
 	quiet.Do(func() { transcribe.SetLogHandler(nil) })
@@ -41,15 +45,54 @@ func Load(path string) (*Model, error) {
 	if err != nil {
 		return nil, err
 	}
+	before := deviceFree(opts)
 	s, err := transcribe.Open(path, opts, nil)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", filepath.Base(path), err)
 	}
 	return &Model{
-		s:    s,
-		name: strings.TrimSuffix(filepath.Base(path), ".gguf"),
-		gpu:  gpu,
+		s:     s,
+		name:  strings.TrimSuffix(filepath.Base(path), ".gguf"),
+		gpu:   gpu,
+		bytes: footprint(s, before, uint64(info.Size())),
 	}, nil
+}
+
+// Bytes is what this model cost on its device. Measured from the device's
+// free memory where the backend reports it, and otherwise the file size.
+func (m *Model) Bytes() uint64 { return m.bytes }
+
+// deviceFree is free memory on the device a load with these options will
+// land on, or 0 when the backend does not report it.
+func deviceFree(opts *transcribe.LoadOptions) uint64 {
+	devices, err := transcribe.Devices()
+	if err != nil {
+		return 0
+	}
+	i := 0
+	if opts != nil {
+		i = opts.GPUDevice
+	}
+	if i < 0 || i >= len(devices) {
+		return 0
+	}
+	return devices[i].MemoryFree
+}
+
+// footprint is what the load actually consumed. Weights are most of it, but
+// not all: ggml also allocates a context and compute buffers, which on a
+// small model outweigh the weights several times over. So measure the
+// device rather than trusting the file size, and keep the file size as the
+// floor for backends that report no memory at all.
+func footprint(s *transcribe.Session, before, fileSize uint64) uint64 {
+	dev, err := s.Model().Device()
+	if err != nil || before == 0 || dev.MemoryFree == 0 || dev.MemoryFree >= before {
+		return fileSize
+	}
+	if used := before - dev.MemoryFree; used > fileSize {
+		return used
+	}
+	return fileSize
 }
 
 // placement decides where compute runs, and names the device it chose.
@@ -95,7 +138,29 @@ func (m *Model) Arch() string {
 	if m.gpu != "" {
 		where = "gpu " + m.gpu
 	}
-	return fmt.Sprintf("%s, %s [%s]", m.name, where, Devices())
+	return fmt.Sprintf("%s, %s, %d MB [%s]", m.name, where, m.bytes>>20, Devices())
+}
+
+// DeviceMemory is the total memory of the device transcription runs on, or 0
+// when the backend reports none. It is what a cache budget is a fraction of.
+func DeviceMemory() uint64 {
+	quiet.Do(func() { transcribe.SetLogHandler(nil) })
+	opts, _, err := placement()
+	if err != nil {
+		return 0
+	}
+	devices, err := transcribe.Devices()
+	if err != nil {
+		return 0
+	}
+	i := 0
+	if opts != nil {
+		i = opts.GPUDevice
+	}
+	if i < 0 || i >= len(devices) {
+		return 0
+	}
+	return devices[i].MemoryTotal
 }
 
 // Devices describes every compute device the library registered.

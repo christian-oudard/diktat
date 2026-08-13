@@ -18,6 +18,12 @@ type Config struct {
 	Model        string            `toml:"model"`
 	PasteMethods map[string]string `toml:"paste_methods"`
 	HistoryFile  string            `toml:"history_file"`
+	// ModelCacheMB caps what resident models may hold together, in MB. The
+	// daemon keeps every model it loads so switching back is instant, which
+	// needs a ceiling once the models are large: on a shared laptop GPU the
+	// memory is wanted by the desktop too. 0 takes two thirds of the compute
+	// device's memory.
+	ModelCacheMB int `toml:"model_cache_mb"`
 }
 
 // DefaultPath returns the standard config location.

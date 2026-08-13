@@ -54,17 +54,25 @@ to type rather than fetching it. Anything with a slash is used as a path, so an
 out-of-menu model still works.
 
 Every model stays resident once loaded, so switching back to one already seen
-is instant. A swap does not interrupt a recording in progress, since the
-capture buffer is independent of the model. If the new model fails to load,
-the daemon keeps serving with the one it has.
+is instant, up to a memory ceiling: past it the least recently used ones are
+dropped, never the one in use. Set `model_cache_mb` to change the ceiling; it
+defaults to two thirds of the GPU's memory. A swap does not interrupt a
+recording in progress, since the capture buffer is independent of the model.
+If the new model fails to load, the daemon keeps serving with the one it has.
 
-Whisper responds more slowly than moonshine, and not for a fixable reason: it
-always encodes a padded 30-second window, so a 2-second utterance costs the
-same as a 30-second one. Measured on the same 11s clip on CPU, whisper-base.en
-takes about 620ms against moonshine-base's 280ms and moonshine-tiny's 170ms.
+Whisper always encodes a padded 30-second window, so a 2-second utterance
+costs it the same as a 30-second one, while the rest encode only what they
+were given. On this laptop's CPU, whisper-tiny.en against
+parakeet-tdt_ctc-110m: 1045ms vs 136ms on a 2-second utterance, 960ms vs
+235ms on a 3-second one, then 2365ms vs 2335ms at 30 seconds and 2639ms vs
+4768ms at 55. The flat cost is a liability up to about half a minute and an
+asset past it, and dictation is mostly short utterances, so the menu leads
+with the models that scale with the audio. On a GPU the gap narrows, since
+the padded encoder parallelises well, and the reason to prefer parakeet
+becomes accuracy per megabyte rather than latency.
 
-A switch does not persist across a daemon restart; the daemon always comes back
-on its default, or on one named as an argument: `diktat daemon whisper-base.en`.
+A switch does not persist across a daemon restart; the daemon always comes
+back on the model named in the config, or on the default.
 
 To compare engines on fixed audio instead of live, `diktat transcribe -model`
 runs any of them over the same WAVs. See `docs/mic-calibration.md`.
@@ -77,17 +85,18 @@ purpose:
 - Freshly loaded, before any transcription: about 530 MB
 - Steady state after a few minutes of use: about 1310 MB, flat
 
-Those are for moonshine-base alone; the default is whisper-tiny.en, which
-is smaller. tiny is roughly half: 275 MB
-loaded, settling near 680 MB.
+Those were measured with moonshine-base alone; whisper-tiny.en, the default,
+is roughly half: 275 MB loaded, settling near 680 MB. The newer and larger
+entries in the menu cost considerably more, which is what the cache budget
+below is for.
 
-Models switched into with `diktat model` stay resident rather than being freed,
-so switching costs memory once and nothing thereafter. Whisper is the exception
-and holds nothing between utterances, since it runs as a subprocess, though
-that subprocess still counts against the daemon's cgroup limit.
-
-A typical utterance transcribes in well under 150ms; a full 60-second one takes
-about 1.1s.
+Models switched into with `diktat model` stay resident, so switching back
+costs nothing after the first load. That is bounded: past `model_cache_mb`
+the least recently used are freed, never the one in use. The ceiling matters
+because a model costs far more than its file on disk, since ggml's context
+and compute buffers outweigh the weights of a small model several times
+over; the daemon measures the real cost at load rather than guessing from
+the file size.
 
 Recording stops automatically after 60 seconds and transcribes what it has.
 Without that the sample buffer would grow at 64 KB/s for as long as the

@@ -1,5 +1,5 @@
-// Daemon: keeps the moonshine model loaded, toggles recording on SIGUSR1,
-// transcribes on stop, types the result.
+// Daemon: keeps the model loaded, toggles recording on SIGUSR1, transcribes
+// on stop, types the result.
 package main
 
 import (
@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -96,6 +97,8 @@ func runDaemon(args []string) {
 	d := &daemon{
 		model:    model,
 		models:   map[string]*asr.Model{modelDir: model},
+		lru:      []string{modelDir},
+		budget:   cacheBudget(cfg),
 		recorder: rec,
 		cfg:      cfg,
 		modelDir: modelDir,
@@ -149,7 +152,12 @@ type daemon struct {
 	model *asr.Model
 	// Every model loaded this session, kept resident so switching back to one
 	// already seen is instant.
-	models    map[string]*asr.Model
+	models map[string]*asr.Model
+	// lru is the model cache's use order, oldest first, and budget is what
+	// the cache may hold. Together they bound resident memory, which on a
+	// laptop GPU is the scarce resource.
+	lru       []string
+	budget    uint64
 	recorder  *audio.Recorder
 	cfg       *config.Config
 	capTimer  *time.Timer
@@ -184,6 +192,7 @@ func (d *daemon) reloadModel() {
 
 	if model, ok := d.models[dir]; ok {
 		d.model, d.modelDir = model, dir
+		d.touch(dir)
 		log.Printf("Model now %s (%s), already resident", dir, model.Arch())
 		d.restoreStatus()
 		return
@@ -203,9 +212,79 @@ func (d *daemon) reloadModel() {
 	warm(model)
 	d.models[dir] = model
 	d.model, d.modelDir = model, dir
-	log.Printf("Model now %s (%s) in %s, %d resident",
-		dir, model.Arch(), time.Since(t0).Round(time.Millisecond), len(d.models))
+	d.touch(dir)
+	d.evict()
+	log.Printf("Model now %s (%s) in %s, %d resident, %d MB cached",
+		dir, model.Arch(), time.Since(t0).Round(time.Millisecond), len(d.models), d.cached()>>20)
 	d.restoreStatus()
+}
+
+// touch records dir as the most recently used model.
+func (d *daemon) touch(dir string) {
+	d.lru = slices.DeleteFunc(d.lru, func(s string) bool { return s == dir })
+	d.lru = append(d.lru, dir)
+}
+
+// cached is what every resident model costs together.
+func (d *daemon) cached() uint64 {
+	var total uint64
+	for _, m := range d.models {
+		total += m.Bytes()
+	}
+	return total
+}
+
+// overBudget is which models to drop, oldest first, to bring a cache holding
+// `sizes` within budget. The last entry in lru is the one in use and is never
+// returned, so a budget too small even for one model degrades to keeping
+// exactly that one rather than to keeping none.
+//
+// Split from evict so the policy can be tested without loading a model.
+func overBudget(lru []string, sizes map[string]uint64, budget uint64) []string {
+	var total uint64
+	for _, s := range sizes {
+		total += s
+	}
+	var drop []string
+	for i := 0; i+1 < len(lru) && total > budget; i++ {
+		drop = append(drop, lru[i])
+		total -= sizes[lru[i]]
+	}
+	return drop
+}
+
+// evict frees least-recently-used models until the resident set fits the
+// budget. Models stay loaded because switching back is then instant, but on
+// a laptop GPU that generosity runs out: the card here has 8 GB, and ggml's
+// context and compute buffers cost more than the weights do for a small
+// model, so a few switches can fill it.
+func (d *daemon) evict() {
+	sizes := make(map[string]uint64, len(d.models))
+	for dir, m := range d.models {
+		sizes[dir] = m.Bytes()
+	}
+	for _, dir := range overBudget(d.lru, sizes, d.budget) {
+		log.Printf("Evicting %s (%d MB), cache over %d MB budget",
+			dir, sizes[dir]>>20, d.budget>>20)
+		d.models[dir].Close()
+		delete(d.models, dir)
+		d.lru = slices.DeleteFunc(d.lru, func(s string) bool { return s == dir })
+	}
+}
+
+// cacheBudget is how much memory resident models may hold together.
+// Configured in MB, or two thirds of the compute device's memory: enough to
+// keep a couple of models around, with room left for the rest of the desktop
+// on a shared laptop GPU. A device that reports no memory falls back to a
+// figure that fits the models in the menu without assuming a big card.
+func cacheBudget(cfg *config.Config) uint64 {
+	if cfg.ModelCacheMB > 0 {
+		return uint64(cfg.ModelCacheMB) << 20
+	}
+	if total := asr.DeviceMemory(); total > 0 {
+		return total / 3 * 2
+	}
+	return 4 << 30
 }
 
 // warm runs one throwaway transcription, because loading a model is not the
