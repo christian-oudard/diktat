@@ -102,6 +102,16 @@ func (m *Model) SetVocabulary(hints string) { m.vocabulary = strings.TrimSpace(h
 // TakesVocabulary reports whether SetVocabulary does anything for this model.
 func (m *Model) TakesVocabulary() bool { return m.takesPrompt }
 
+// Languages are the language codes the model advertises accepting as a hint.
+// Empty means it advertises no set, which is not the same as accepting none.
+func (m *Model) Languages() ([]string, error) {
+	c, err := m.s.Model().Capabilities()
+	if err != nil {
+		return nil, err
+	}
+	return c.Languages, nil
+}
+
 // Measure re-reads what this model costs and keeps the larger answer.
 //
 // Worth calling again after the first transcription: loading allocates the

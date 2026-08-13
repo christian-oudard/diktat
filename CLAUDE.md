@@ -39,6 +39,9 @@ bindings; there is no second engine.
 - `internal/models` - the menu. Six entries, none bundled: everything is
   downloaded into `~/.cache/diktat/models` from the `handy-computer` GGUF
   repos, so no model is a special case. Downloads are never implicit. The
+  menu carries a language set and a vocab flag per model, both hand-kept
+  because the menu has to answer before a model is downloaded, and both
+  checked against the library by a test for whatever is present. The
   menu leads with parakeet rather than whisper: whisper encodes a padded 30
   second window whatever was said, so on a 2 second utterance it costs the
   same as on a 30 second one, while parakeet encodes only what it was

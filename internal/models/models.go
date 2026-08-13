@@ -25,6 +25,18 @@ type Spec struct {
 	// before anything is downloaded. TestVocabMatchesLibrary checks it
 	// against the library for whatever is present.
 	Vocab bool
+	// Langs are the language codes the model advertises, or nil for a model
+	// that takes most of them: whisper-large-v3-turbo lists a hundred, which
+	// is not a menu column. Checked against the library the same way.
+	Langs []string
+}
+
+// Languages renders the language support for the menu.
+func (s Spec) Languages() string {
+	if len(s.Langs) == 0 {
+		return "all"
+	}
+	return strings.Join(s.Langs, " ")
 }
 
 // Default is what the daemon loads when not told otherwise. Still whisper,
@@ -76,13 +88,13 @@ const Default = "whisper-tiny.en"
 // granite is the ceiling, and the only entry big enough to need the cache
 // budget to evict something first.
 var Catalog = []Spec{
-	{"moonshine-tiny", "Q8_0", 35, false},
-	{"whisper-tiny.en", "Q5_K_M", 44, true},
-	{"parakeet-tdt_ctc-110m", "Q5_K_M", 101, false},
-	{"parakeet-tdt-0.6b-v2", "Q5_K_M", 539, false},
-	{"whisper-large-v3-turbo", "Q5_K_M", 619, true},
-	{"canary-1b-flash", "Q5_K_M", 769, false},
-	{"granite-speech-4.1-2b-nar", "Q5_K_M", 1782, false},
+	{"moonshine-tiny", "Q8_0", 35, false, []string{"en"}},
+	{"whisper-tiny.en", "Q5_K_M", 44, true, []string{"en"}},
+	{"parakeet-tdt_ctc-110m", "Q5_K_M", 101, false, []string{"en"}},
+	{"parakeet-tdt-0.6b-v2", "Q5_K_M", 539, false, []string{"en"}},
+	{"whisper-large-v3-turbo", "Q5_K_M", 619, true, nil},
+	{"canary-1b-flash", "Q5_K_M", 769, false, []string{"en", "de", "es", "fr"}},
+	{"granite-speech-4.1-2b-nar", "Q5_K_M", 1782, false, []string{"en", "de", "es", "fr", "pt"}},
 }
 
 // Dir is where downloaded models live.

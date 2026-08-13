@@ -71,7 +71,8 @@ func listModels() string {
 		if s.Vocab {
 			vocab = "vocab"
 		}
-		fmt.Printf("%s %d %-28s %5d MB  %s  %s\n", mark, i+1, s.Name, s.MB, vocab, state)
+		fmt.Printf("%s %d %-28s %5d MB  %-14s %s  %s\n",
+			mark, i+1, s.Name, s.MB, s.Languages(), vocab, state)
 	}
 	// Whether a daemon is up no longer changes what choosing a model does, so
 	// its absence is not worth reporting. A daemon on a path outside the menu
