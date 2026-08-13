@@ -1,10 +1,15 @@
 {
-  description = "Voice dictation with Moonshine ONNX";
+  description = "Voice dictation with transcribe.cpp";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  # The speech library the daemon links against, which packages itself. The
+  # fork, until the Go bindings and the flake land upstream; after that this
+  # becomes github:handy-computer/transcribe.cpp and nothing else changes.
+  inputs.transcribe-cpp.url = "github:christian-oudard/transcribe.cpp";
+  inputs.transcribe-cpp.inputs.nixpkgs.follows = "nixpkgs";
 
   outputs =
-    { self, nixpkgs }:
+    { self, nixpkgs, transcribe-cpp }:
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
@@ -17,13 +22,11 @@
       ];
       runtimeBin = pkgs.lib.makeBinPath runtimeDeps;
 
-      # The encoder runs on a padded 30 second window whatever the utterance
-      # length, so it dominates transcription time: ~510ms on 22 CPU threads
-      # against ~9ms on a laptop RTX 4070. Vulkan rather than CUDA because it
-      # is in the binary cache, needs no unfree toolchain, and covers Intel and
-      # AMD too. With no Vulkan device ggml says "no GPU found" and falls back
-      # to CPU, so this is safe on machines without a usable one.
-      whisper = pkgs.whisper-cpp.override { vulkanSupport = true; };
+      # One library for every family, whisper and moonshine alike. The
+      # encoder runs on a padded 30 second window for whisper whatever the
+      # utterance length, so it dominates transcription time: ~510ms on 22 CPU
+      # threads against ~9ms on a laptop RTX 4070, hence the Vulkan build.
+      transcribe = transcribe-cpp.packages.${system}.default;
 
       # miniaudio dlopens these by SONAME at runtime.
       audioInputs = [
@@ -61,9 +64,9 @@
           "-X main.gitRev=${gitRev}"
           "-X main.gitDate=${gitDate}"
         ];
-        # whisper.cpp is linked in, not shelled out to, so the model stays
+        # libtranscribe is linked in, not shelled out to, so the model stays
         # loaded between utterances.
-        buildInputs = [ whisper ];
+        buildInputs = [ transcribe ];
         subPackages = [ "cmd/diktat" ];
         # The default check phase tests only subPackages, which is cmd/diktat
         # and has no test files, so it ran nothing. Test everything instead.
@@ -82,10 +85,8 @@
         postInstall = ''
           for bin in $out/bin/*; do
             wrapProgram "$bin" \
-              --set ONNXRUNTIME_LIB ${pkgs.onnxruntime}/lib/libonnxruntime.so \
-              --set GGML_BACKEND_DIR ${whisper}/lib \
               --prefix PATH : ${runtimeBin} \
-              --suffix LD_LIBRARY_PATH : ${audioLibs}
+              --suffix LD_LIBRARY_PATH : ${audioLibs}:${pkgs.vulkan-loader}/lib
           done
           install -Dm644 $src/completions/_diktat $out/share/zsh/site-functions/_diktat
         '';
@@ -95,10 +96,8 @@
       # sets, so the binaries work without going through `nix build`.
       devShells.${system}.default = pkgs.mkShell {
         packages = [ pkgs.go ] ++ runtimeDeps;
-        buildInputs = audioInputs ++ [ whisper ];
-        ONNXRUNTIME_LIB = "${pkgs.onnxruntime}/lib/libonnxruntime.so";
-        GGML_BACKEND_DIR = "${whisper}/lib";
-        LD_LIBRARY_PATH = audioLibs;
+        buildInputs = audioInputs ++ [ transcribe ];
+        LD_LIBRARY_PATH = "${audioLibs}:${pkgs.vulkan-loader}/lib";
       };
     };
 }

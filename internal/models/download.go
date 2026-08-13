@@ -8,10 +8,9 @@ import (
 	"path/filepath"
 )
 
-const (
-	moonshineHF = "https://huggingface.co/UsefulSensors"
-	whisperHF   = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
-)
+// hfOrg publishes the GGUF conversion of every model in the menu, one repo
+// per model named after it.
+const hfOrg = "https://huggingface.co/handy-computer"
 
 // Download fetches a menu entry into the cache and returns where it landed.
 // Files already present are left alone, so re-running is cheap. Downloads are
@@ -24,30 +23,9 @@ func Download(name string, progress io.Writer) (string, error) {
 	if err := os.MkdirAll(Dir(), 0755); err != nil {
 		return "", err
 	}
-
-	if spec.Kind == Whisper {
-		dest := spec.Path()
-		url := fmt.Sprintf("%s/ggml-%s.bin", whisperHF, spec.size)
-		return dest, get(url, dest, progress)
-	}
-
-	dir := spec.Path()
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", err
-	}
-	onnx := fmt.Sprintf("%s/moonshine/resolve/main/onnx/merged/%s/float", moonshineHF, spec.size)
-	files := []struct{ url, dest string }{
-		{onnx + "/encoder_model.onnx", filepath.Join(dir, "encoder.onnx")},
-		{onnx + "/decoder_model_merged.onnx", filepath.Join(dir, "decoder.onnx")},
-		{fmt.Sprintf("%s/moonshine-%s/resolve/main/tokenizer.json", moonshineHF, spec.size),
-			filepath.Join(dir, "tokenizer.json")},
-	}
-	for _, f := range files {
-		if err := get(f.url, f.dest, progress); err != nil {
-			return "", err
-		}
-	}
-	return dir, nil
+	dest := spec.Path()
+	url := fmt.Sprintf("%s/%s-gguf/resolve/main/%s", hfOrg, spec.Name, spec.File())
+	return dest, get(url, dest, progress)
 }
 
 func get(url, dest string, progress io.Writer) error {

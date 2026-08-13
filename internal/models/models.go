@@ -10,19 +10,12 @@ import (
 	"strings"
 )
 
-type Kind int
-
-const (
-	Moonshine Kind = iota
-	Whisper
-)
-
 // Spec is one entry in the menu.
 type Spec struct {
 	Name string
-	Kind Kind
-	// size is the upstream's name for it, which is not always our name.
-	size string
+	// quant is the quantization published for this model. Whisper ships a
+	// K-quant, moonshine only Q8_0.
+	quant string
 	// MB is the download size, so the menu can show the cost of fetching one.
 	MB int
 }
@@ -40,20 +33,22 @@ const Default = "whisper-tiny.en"
 //	base.en                10.3% WER   22ms
 //	small.en                6.7% WER   52ms
 //	large-v3-turbo          4.1% WER  139ms
-//	large-v3-turbo-q5_0     3.8% WER  146ms
 //
 // medium.en and distil-large-v3.5 are left out as dominated: both are larger
 // and slower than large-v3-turbo and score worse. turbo is large-v3 with the
 // decoder distilled from 32 layers to 4, which is why it costs no more than
 // medium despite being a bigger model.
+//
+// Moonshine is here for its shape rather than its accuracy: it encodes only
+// the audio it was given instead of padding to 30 seconds, so on short
+// utterances it is far cheaper than its size suggests.
 var Catalog = []Spec{
-	{"moonshine-tiny", Moonshine, "tiny", 106},
-	{"moonshine-base", Moonshine, "base", 238},
-	{"whisper-tiny.en", Whisper, "tiny.en", 75},
-	{"whisper-base.en", Whisper, "base.en", 142},
-	{"whisper-small.en", Whisper, "small.en", 487},
-	{"whisper-large-v3-turbo-q5_0", Whisper, "large-v3-turbo-q5_0", 574},
-	{"whisper-large-v3-turbo", Whisper, "large-v3-turbo", 1624},
+	{"moonshine-tiny", "Q8_0", 35},
+	{"moonshine-base", "Q8_0", 77},
+	{"whisper-tiny.en", "Q5_K_M", 44},
+	{"whisper-base.en", "Q5_K_M", 63},
+	{"whisper-small.en", "Q5_K_M", 193},
+	{"whisper-large-v3-turbo", "Q5_K_M", 619},
 }
 
 // Dir is where downloaded models live.
@@ -65,15 +60,12 @@ func Dir() string {
 	return filepath.Join(home, ".cache", "diktat", "models")
 }
 
-// Path is where a menu entry lands once downloaded. Moonshine is a directory
-// of ONNX files, whisper a single ggml file, which is how the daemon tells
-// them apart.
-func (s Spec) Path() string {
-	if s.Kind == Whisper {
-		return filepath.Join(Dir(), s.Name+".bin")
-	}
-	return filepath.Join(Dir(), s.Name)
-}
+// File is the GGUF's name, which carries the quantization so two quants of
+// one model can sit side by side in the cache.
+func (s Spec) File() string { return fmt.Sprintf("%s-%s.gguf", s.Name, s.quant) }
+
+// Path is where a menu entry lands once downloaded.
+func (s Spec) Path() string { return filepath.Join(Dir(), s.File()) }
 
 // Downloaded reports whether the model is present and complete.
 func (s Spec) Downloaded() bool {
@@ -114,22 +106,19 @@ func Resolve(nameOrPath string) string {
 	return filepath.Join(Dir(), nameOrPath)
 }
 
-// Check reports whether path holds a model the daemon can load.
+// Check reports whether path holds a model the daemon can load. Whether the
+// GGUF is one of the architectures the library implements is its business,
+// not ours; this only rules out the obvious mistakes.
 func Check(path string) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		return err
 	}
-	if !info.IsDir() {
-		if !strings.HasSuffix(path, ".bin") {
-			return fmt.Errorf("%s: not a whisper .bin", path)
-		}
-		return nil
+	if info.IsDir() {
+		return fmt.Errorf("%s: a directory, not a .gguf", path)
 	}
-	for _, f := range []string{"encoder.onnx", "decoder.onnx", "tokenizer.json"} {
-		if _, err := os.Stat(filepath.Join(path, f)); err != nil {
-			return fmt.Errorf("%s: incomplete moonshine model, missing %s", path, f)
-		}
+	if !strings.HasSuffix(path, ".gguf") {
+		return fmt.Errorf("%s: not a .gguf", path)
 	}
 	return nil
 }

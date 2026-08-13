@@ -18,7 +18,28 @@
     },
     "root": {
       "inputs": {
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "transcribe-cpp": "transcribe-cpp"
+      }
+    },
+    "transcribe-cpp": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1786602220,
+        "narHash": "sha256-4toNQPiT2G9p681lO+qpU95YfvuBJrp8b9jJ0FVNcic=",
+        "owner": "christian-oudard",
+        "repo": "transcribe.cpp",
+        "rev": "efee8211cc554d7b9e7fbe406d713d344af9bb94",
+        "type": "github"
+      },
+      "original": {
+        "owner": "christian-oudard",
+        "repo": "transcribe.cpp",
+        "type": "github"
       }
     }
   },

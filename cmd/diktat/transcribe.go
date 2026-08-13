@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"os"
 	"time"
 
 	"github.com/christian-oudard/diktat/internal/asr"
@@ -22,16 +21,11 @@ func runTranscribe(args []string) {
 	name := fs.String("model", models.Default, "model to transcribe with")
 	fs.Parse(args)
 
-	ortLib := os.Getenv("ONNXRUNTIME_LIB")
-	if ortLib == "" {
-		log.Fatal("ONNXRUNTIME_LIB must be set")
-	}
-	modelDir := models.Resolve(*name)
-	if err := models.Check(modelDir); err != nil {
+	modelPath := models.Resolve(*name)
+	if err := models.Check(modelPath); err != nil {
 		log.Fatalf("%s is not downloaded. Get it with:\n  diktat model download %s", *name, *name)
 	}
-	// Accepts a whisper .bin as readily as a moonshine directory.
-	model, err := asr.Load(modelDir, ortLib)
+	model, err := asr.Load(modelPath)
 	if err != nil {
 		log.Fatalf("load model: %v", err)
 	}

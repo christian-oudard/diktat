@@ -42,14 +42,10 @@ live dictation without restarting the session:
     $ diktat model download whisper-tiny.en
     $ diktat model whisper-tiny.en    # switch
 
-Both engines are switchable:
-
-- moonshine, a directory of `encoder.onnx`, `decoder.onnx`, `tokenizer.json`.
-  Any size works with no code change, since the architecture is read from the
-  decoder's own ONNX input shapes.
-- whisper, a single ggml `.bin`, run through whisper.cpp linked in process.
-
-The daemon tells them apart by whether the path is a directory or a `.bin`.
+Every model is one GGUF file, run through transcribe.cpp linked in process.
+Moonshine and whisper are the same kind of thing to the daemon: which
+architecture a file holds is read out of the file, so nothing here special
+cases a family.
 
 No model ships with the build, so every one is downloaded into
 `~/.cache/diktat/models` and they are all on the same footing. Downloads are
@@ -57,16 +53,15 @@ never implicit: starting the daemon without the model it wants tells you what
 to type rather than fetching it. Anything with a slash is used as a path, so an
 out-of-menu model still works.
 
-Moonshine takes about 1.5s to load the first time; after that
-every model stays resident, so switching back to one already seen is instant. A
-swap does not interrupt a recording in progress, since the capture buffer is
-independent of the model. If the new model fails to load, the daemon keeps
-serving with the one it has.
+Every model stays resident once loaded, so switching back to one already seen
+is instant. A swap does not interrupt a recording in progress, since the
+capture buffer is independent of the model. If the new model fails to load,
+the daemon keeps serving with the one it has.
 
-Whisper responds more slowly, and not for a fixable reason: it always encodes
-a padded 30-second window, so a 2-second utterance costs the same as a
-30-second one. Measured on the same clip, whisper-base.en takes about 570ms
-against moonshine-base's 115ms, with both models held in memory.
+Whisper responds more slowly than moonshine, and not for a fixable reason: it
+always encodes a padded 30-second window, so a 2-second utterance costs the
+same as a 30-second one. Measured on the same 11s clip on CPU, whisper-base.en
+takes about 620ms against moonshine-base's 280ms and moonshine-tiny's 170ms.
 
 A switch does not persist across a daemon restart; the daemon always comes back
 on its default, or on one named as an argument: `diktat daemon whisper-base.en`.

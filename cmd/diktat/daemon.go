@@ -48,10 +48,6 @@ func runDaemon(args []string) {
 
 	// Pre-flight before the log is redirected to a file, so a user who runs
 	// this in a terminal sees why it would not start.
-	ortLib := os.Getenv("ONNXRUNTIME_LIB")
-	if ortLib == "" {
-		log.Fatal("ONNXRUNTIME_LIB must be set")
-	}
 	cfg, err := config.Load(config.DefaultPath())
 	if err != nil {
 		log.Printf("config: %v (continuing with defaults)", err)
@@ -84,7 +80,7 @@ func runDaemon(args []string) {
 	// A `diktat model` switch deliberately does not persist: the daemon comes
 	// back on the configured model rather than on whatever a stale /tmp file
 	// says.
-	model, err := asr.Load(modelDir, ortLib)
+	model, err := asr.Load(modelDir)
 	if err != nil {
 		log.Fatalf("load model: %v", err)
 	}
@@ -99,11 +95,10 @@ func runDaemon(args []string) {
 	capCh := make(chan struct{}, 1)
 	d := &daemon{
 		model:    model,
-		models:   map[string]asr.Backend{modelDir: model},
+		models:   map[string]*asr.Model{modelDir: model},
 		recorder: rec,
 		cfg:      cfg,
 		modelDir: modelDir,
-		ortLib:   ortLib,
 	}
 	defer d.closeModels()
 	warm(model)
@@ -151,16 +146,15 @@ func runDaemon(args []string) {
 }
 
 type daemon struct {
-	model asr.Backend
+	model *asr.Model
 	// Every model loaded this session, kept resident so switching back to one
 	// already seen is instant.
-	models    map[string]asr.Backend
+	models    map[string]*asr.Model
 	recorder  *audio.Recorder
 	cfg       *config.Config
 	capTimer  *time.Timer
 	startedAt time.Time
 	modelDir  string
-	ortLib    string
 
 	mu        sync.Mutex
 	recording bool
@@ -197,7 +191,7 @@ func (d *daemon) reloadModel() {
 
 	setStatus(statusLoad)
 	t0 := time.Now()
-	model, err := asr.Load(dir, d.ortLib)
+	model, err := asr.Load(dir)
 	if err != nil {
 		// Keep serving with the model we have, and put the file back so it
 		// keeps describing what is actually loaded.
@@ -218,7 +212,7 @@ func (d *daemon) reloadModel() {
 // same as being ready to use it: the Vulkan backend defers compiling its
 // shaders to the first encode. The daemon is resident and loads eagerly, so
 // pay that here rather than on the first thing the user says.
-func warm(m asr.Backend) {
+func warm(m *asr.Model) {
 	t0 := time.Now()
 	if _, err := m.Transcribe(make([]float32, audio.SampleRate)); err != nil {
 		log.Printf("warmup: %v", err)

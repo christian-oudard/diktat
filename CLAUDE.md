@@ -5,6 +5,8 @@
 Voice dictation for Linux/Sway/Wayland. Default model is whisper-tiny.en, run
 on a discrete GPU when there is one. Go binaries built via nix `buildGoModule`.
 Models are downloaded on demand into the user's cache, not at build time.
+Speech recognition is transcribe.cpp throughout, linked in through its Go
+bindings; there is no second engine.
 
 ## Layout
 
@@ -23,25 +25,22 @@ Models are downloaded on demand into the user's cache, not at build time.
   count in `internal/audio` that does not trust the device's frame rate.
 - `model.go` - lists, switches (via SIGHUP), or downloads models. Models stay
   resident once loaded, so switching back is instant.
-- `internal/models` - the menu. Four entries, none bundled: everything is
-  downloaded into `~/.cache/diktat/models`, so no model is a special case.
-  Downloads are never implicit.
-- `internal/asr` - `Backend` is the interface the daemon holds; `asr.Load`
-  picks the implementation from the path. A directory is moonshine, whose
-  layer count, KV head count and head dim are read off the decoder's ONNX
-  input shapes rather than compiled in, so any size loads. A `.bin` is
-  whisper, shelled out to `whisper-cli`.
-- `internal/wav` - WAV read/write, split out from `internal/audio` so `asr`
-  can write whisper's input file without pulling in malgo.
+- `internal/models` - the menu. Six entries, none bundled: everything is
+  downloaded into `~/.cache/diktat/models` from the `handy-computer` GGUF
+  repos, so no model is a special case. Downloads are never implicit.
+- `internal/asr` - one `Model` over transcribe.cpp. There is no backend
+  interface any more: every model is a GGUF and the library reads the
+  architecture out of it, so moonshine and whisper are not distinguishable
+  here. Picks the discrete GPU when there is one.
+- `internal/wav` - WAV read/write, split out from `internal/audio` so the
+  offline tools can read a clip without pulling in malgo.
 - `internal/` - shared packages: asr, audio, config, output.
 
 ## Runtime contract
 
-The wrapped binaries see these environment variables (set by the nix wrapper):
-
-- `ONNXRUNTIME_LIB` - absolute path to libonnxruntime.so
-- `GGML_BACKEND_DIR` - directory of ggml's backend .so files
-- `VULKAN_LIB` - absolute path to libvulkan.so.1, dlopened by the GPU probe
+libtranscribe is linked at build time and its backends are compiled in, so
+the wrapper sets no library-path variables of its own beyond the audio and
+Vulkan loaders it needs at runtime.
 
 Models are not part of the build; they are fetched at runtime into the user's
 cache by `diktat model download`.
@@ -50,23 +49,21 @@ External CLIs expected on PATH: `wtype`, `wl-copy`, `wl-paste`, `swaymsg`.
 
 ## GPU
 
-whisper.cpp is built with ggml's Vulkan backend, not CUDA: Vulkan is in the
+transcribe.cpp is built with ggml's Vulkan backend, not CUDA: Vulkan is in the
 binary cache, needs no unfree toolchain, and covers Intel and AMD as well as
-NVIDIA. The encoder always runs on a padded 30 second window, so it costs the
-same whatever the utterance length and dominates transcription. On a 2 second
-utterance with whisper-base.en that is ~594ms on 22 CPU threads against ~23ms
-on a laptop RTX 4070.
+NVIDIA. Whisper's encoder always runs on a padded 30 second window, so it costs
+the same whatever the utterance length and dominates transcription. On a 2
+second utterance with whisper-base.en that is ~594ms on 22 CPU threads against
+~23ms on a laptop RTX 4070.
 
-Whisper itself accepts the first device that is a GPU *or* an integrated GPU,
-so on a hybrid laptop it will happily land on the Intel chip instead of the
-discrete card. An iGPU shares memory bandwidth with the CPU it would be
-replacing and is no clear win, so `diktat_discrete_gpu` in `internal/asr` walks
-ggml's device list for a `GGML_BACKEND_DEVICE_TYPE_GPU`, skipping
-`..._TYPE_IGPU`, and pins `gpu_device` to its index. The index is in whisper's
-numbering, which counts both kinds, so it is not the same as ggml's. No
-discrete device means CPU. `DIKTAT_GPU=0` forces CPU and `=1` takes whatever
-whisper would have picked unaided. `diktat transcribe` prints the device it
-chose, and so does the daemon's startup line.
+The library takes the first device that is a GPU *or* an integrated GPU, so on
+a hybrid laptop it will happily land on the Intel chip instead of the discrete
+card. An iGPU shares memory bandwidth with the CPU it would be replacing and is
+no clear win, so `placement` in `internal/asr` walks `transcribe.Devices()` for
+a `DeviceGPU`, skipping `DeviceIGPU`, and pins `LoadOptions.GPUDevice` to its
+index. No discrete device means CPU. `DIKTAT_GPU=0` forces CPU and `=1` takes
+whatever the library would have picked unaided. `diktat transcribe` prints the
+device it chose, and so does the daemon's startup line.
 
 Loading a model is not the same as being ready to use it: the Vulkan backend
 defers compiling its shaders to the first encode, so the daemon runs one
@@ -77,21 +74,13 @@ The NVIDIA driver keeps compiled shaders in `~/.cache/nvidia/GLCache`, so that
 warmup is ~30ms in the normal case and ~5.8s only when the cache is cold, which
 means once per driver version rather than once per daemon start.
 
-whisper.cpp is linked in via cgo rather than shelled out to, so its model
-stays loaded. ggml loads each compute backend from a separate shared library
-at runtime, which nothing finds by default from a Go binary, so the wrapper
-sets `GGML_BACKEND_DIR` and `internal/asr` calls
-`ggml_backend_load_all_from_path` with it. Without that ggml registers no
-backend and aborts inside `whisper_init`.
-The wrapper prepends them.
-
 ## IPC files (in `/tmp`)
 
 - `diktat-daemon.pid` - daemon PID
 - `diktat-status` - Pango markup status string
 - `diktat-last` - last transcribed text
 - `diktat-last.wav` - audio of the last capture, pre-normalization
-- `diktat-model` - model directory currently loaded
+- `diktat-model` - model file currently loaded
 - `diktat-daemon.log` - log
 
 ## Build
@@ -101,6 +90,10 @@ nix build
 ./result/bin/diktat model download whisper-tiny.en
 ./result/bin/diktat daemon
 ```
+
+The Go bindings to transcribe.cpp live in that project's own tree and are
+vendored here. `go mod vendor` needs the checkout beside this one, since
+go.mod resolves them through a relative `replace`.
 
 `nix build` only writes ./result; it puts nothing on PATH. To get `diktat`
 itself on PATH, `nix profile add .`.
@@ -115,4 +108,6 @@ itself on PATH, `nix profile add .`.
 - `paste_methods` - map of sway app_id to paste key combo (`C-v`, `C-S-v`)
 - `history_file` - JSONL append target for each transcription
 
-Vocabulary hints are not supported by Moonshine; the config key is ignored.
+Vocabulary hints are not wired up. Whisper's initial prompt is reachable
+through transcribe.cpp's family extensions, so the capability now exists;
+nothing in diktat uses it yet.
