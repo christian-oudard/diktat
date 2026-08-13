@@ -13,41 +13,70 @@ import (
 	"github.com/christian-oudard/diktat/internal/models"
 )
 
-// runModel: bare lists the menu, anything else switches to that model,
-// fetching it first if it is not in the cache yet.
+// runModel: bare lists the menu and offers to switch, anything else switches
+// to that model, fetching it first if it is not in the cache yet.
 func runModel(args []string) {
 	log.SetFlags(0)
-	if len(args) == 0 {
-		listModels()
+	if len(args) > 0 {
+		switchModel(args[0])
 		return
 	}
-	switchModel(args[0])
+
+	inUse := listModels()
+
+	// Only offer the choice when the listing is being read by a person.
+	// Piped, this command is how the zsh completion learns the menu, and a
+	// prompt there would hang the shell waiting for an answer nobody is
+	// there to give.
+	if !terminal(os.Stdout) {
+		return
+	}
+	if choice := askWhich(inUse); choice != "" {
+		switchModel(choice)
+	}
+}
+
+// askWhich offers the menu numbers, with an empty answer meaning "leave it
+// alone" so the listing stays usable as a listing.
+func askWhich(inUse string) string {
+	keep := "change nothing"
+	if inUse != "" {
+		keep = "keep " + inUse
+	}
+	fmt.Printf("\nSelect 1-%d, or Enter to %s: ", len(models.Catalog), keep)
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil {
+		fmt.Println()
+		return ""
+	}
+	return strings.TrimSpace(line)
 }
 
 // listModels numbers the menu, since the names are long and switching by
 // hand is the common case. The name stays in a fixed column so completion
-// can read it.
-func listModels() {
+// can read it. It returns the menu name of the model in use, or "".
+func listModels() string {
 	loaded := loadedModel()
-	matched := false
+	inUse := ""
 	for i, s := range models.Catalog {
 		state, mark := "not downloaded", " "
 		if s.Downloaded() {
 			state = "downloaded"
 		}
 		if loaded != "" && s.Path() == loaded {
-			state, mark, matched = "downloaded, in-use", "*", true
+			state, mark, inUse = "downloaded, in-use", "*", s.Name
 		}
 		fmt.Printf("%s %d %-28s %5d MB  %s\n", mark, i+1, s.Name, s.MB, state)
 	}
 	switch {
 	case loaded == "":
 		fmt.Println("\nno daemon running")
-	case !matched:
+	case inUse == "":
 		// A daemon can be on a path outside the menu, including one from an
 		// older build. Say so rather than showing no marker at all.
 		fmt.Printf("\nloaded: %s\n", loaded)
 	}
+	return inUse
 }
 
 // loadedModel is what the running daemon has, or "" if none is running.
@@ -118,4 +147,12 @@ func confirm(question string) bool {
 		return true
 	}
 	return false
+}
+
+// terminal reports whether f is a character device, which is what makes a
+// prompt worth printing. A pipe or a file is something reading the output,
+// not someone answering it.
+func terminal(f *os.File) bool {
+	info, err := f.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }

@@ -36,8 +36,8 @@ does not exit on its own.
 The daemon can swap models in place, so another model can be judged against
 live dictation without restarting the session:
 
-    $ diktat model                    # the numbered menu, and what is loaded
-    $ diktat model 3                  # switch to the third entry
+    $ diktat model                    # the menu, then pick one; Enter keeps
+    $ diktat model 3                  # or go straight to the third entry
     $ diktat model whisper-tiny.en    # or name it
 
 Switching to a model that is not in the cache offers to fetch it first, so
