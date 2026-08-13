@@ -1,38 +1,46 @@
 #compdef diktat
 
-# Model names come from `diktat model`, so completion tracks the menu rather
-# than a copy of it that drifts.
+# Everything here is read out of the binary rather than copied from it. A
+# hand-kept list is a second source of truth, and it drifts: this file went on
+# offering `record` and `transcribe` after both had left the tool.
+
+# Commands come from `diktat --help`, whose listing is
+# "  <name> <usage> <summary>" with the summary after a run of padding. Keying
+# off the last run of two or more spaces means the column widths can change
+# without breaking this.
+_diktat_commands() {
+    local -a commands
+    commands=(${(f)"$(diktat --help 2>/dev/null | awk '
+        /^  [a-z]/ {
+            name = $1
+            if (match($0, /.*  +/)) desc = substr($0, RLENGTH + 1)
+            gsub(/:/, "\\:", desc)
+            print name ":" desc
+        }')"})
+    _describe 'command' commands
+}
+
+# Model names come from `diktat model`, whose listing is
+# "[*] <n> <name> <size> MB <state>". The marker column is there only for the
+# model in use, so key off it.
 _diktat_models() {
     local -a names
-    # The listing is "[*] <n> <name> <size> MB <state>"; the marker column
-    # is present only for the model in use, so key off it.
     names=(${(f)"$(diktat model 2>/dev/null | awk '/ MB /{print ($1 == "*") ? $3 : $2}')"})
     _describe 'model' names
 }
 
 _diktat() {
-    local -a commands
-    commands=(
-        'daemon:hold the model in memory and transcribe on toggle'
-        'toggle:start or stop recording'
-        'repeat:type the last transcription again'
-        'model:show, switch, or download models'
-        'version:report the build, and whether the daemon matches it'
-    )
-
     _arguments -C '1: :->command' '*:: :->args'
 
     case $state in
     command)
-        _describe 'command' commands
+        _diktat_commands
         ;;
     args)
         case $words[1] in
         model)
+            # One argument: the model to switch to, by name or by menu number.
             if (( CURRENT == 2 )); then
-                _alternative \
-                    'models:model:_diktat_models'
-            elif [[ $words[2] == download ]]; then
                 _diktat_models
             fi
             ;;

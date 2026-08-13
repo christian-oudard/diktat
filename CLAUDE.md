@@ -14,7 +14,8 @@ bindings; there is no second engine.
 
 - `cmd/diktat/` - the shipped binary, one file per subcommand (daemon,
   toggle, repeat, model, version). `main.go` holds the dispatch
-  table, which also backs the zsh completion in `completions/`. The nix build
+  table; the zsh completion in `completions/` reads the command list back out
+  of `--help` rather than keeping a copy, since the copy drifted. The nix build
   stamps the revision and commit date in via ldflags; the date uses a `T`
   rather than a space, since ldflags are joined on spaces.
 - `daemon.go` - keeps the model loaded and warmed, bounds the resident set
