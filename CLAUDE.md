@@ -23,10 +23,12 @@ bindings; there is no second engine.
   via wtype. Runs for the whole
   session; it never starts recording by itself and never exits by itself.
   Signal handlers are installed before the model load so a toggle during
-  startup is queued rather than killing the process. Recording is capped at
-  60s, since memory grows with utterance length and the daemon is resident.
-  The cap is enforced twice: a wall-clock timer in the daemon, and a sample
-  count in `internal/audio` that does not trust the device's frame rate.
+  startup is queued rather than killing the process. Recording is unlimited:
+  the utterance ends when the user ends it, and anything past the transcription
+  window is cut into pieces (see Warmup below). Separately, a sample count in
+  `internal/audio` bounds the buffer against a device that lies about its frame
+  rate, which an ALSA null device once did to the tune of 19279s of audio in 4s
+  of wall clock.
 - `model.go` - lists the menu, or switches to an entry by number, by name or
   by path (via SIGHUP), fetching it first if the cache lacks it. There is no
   separate download verb: naming a model is the only reason to want one, and
@@ -70,7 +72,8 @@ Vulkan loaders it needs at runtime.
 Models are not part of the build; they are fetched at runtime into the user's
 cache by `diktat model <name>`, which asks before fetching.
 
-External CLIs expected on PATH: `wtype`, `wl-copy`, `wl-paste`, `swaymsg`.
+External CLIs expected on PATH: `wtype`, `wl-copy`, `wl-paste`, `swaymsg`,
+`espeak-ng` (the warmup rehearses on synthesised speech).
 
 ## GPU
 
@@ -90,14 +93,66 @@ index. No discrete device means CPU. `DIKTAT_GPU=0` forces CPU and `=1` takes
 whatever the library would have picked unaided. `cmd/transcribe` prints the
 device it chose, and so does the daemon's startup line.
 
-Loading a model is not the same as being ready to use it: the Vulkan backend
-defers compiling its shaders to the first encode, so the daemon runs one
-throwaway transcription after every load, including a model switch. Without
-that the cost lands on the first thing the user says.
+## Warmup
 
-The NVIDIA driver keeps compiled shaders in `~/.cache/nvidia/GLCache`, so that
-warmup is ~30ms in the normal case and ~5.8s only when the cache is cold, which
-means once per driver version rather than once per daemon start.
+Loading a model is not the same as being ready to use it: the Vulkan backend
+compiles its shaders on the first graph run, and ggml allocates its compute
+buffers there too. Both are per graph shape, and the shape follows the length
+of the audio, so this is not a cost that is paid once.
+
+After a load the daemon transcribes throwaway speech at each rung in
+`internal/audio`, 1, 2, 3, 5, 7, 10, 15, 20, 25 and 30 seconds. The backend
+picks its matmul variants in bands rather than per sample, so rehearsing inside
+a band warms the whole band, and the ladder only has to be dense enough to
+enter every band once. Measured from a cold shader cache, it leaves arbitrary
+lengths from 0.3s to 29.6s compiling nothing.
+
+Which lengths earn a rung is readable rather than guessed. transcribe.cpp
+reports the names of the kernels a device has compiled, not just how many, and
+`cmd/warmbench` prints what each length built that no shorter one had. The
+names carry the variant, so the bands come out directly: on moonshine, 2s
+brings in the q8_0 medium tile, 5s the f16 large tile, 15s the q8_0 large tile
+and 20s its aligned form, and nothing else in the ladder builds anything. On
+canary the productive lengths are 1, 2, 3, 7 and 25 instead, which is why the
+ladder is the union rather than any one model's set.
+
+A sparse ladder does not work and the holes are not where the architecture
+suggests. Rehearsing at 1 and 30 seconds left moonshine compiling a shader at
+20 seconds and granite at 2, 5 and 10, three to four seconds each. The GGUF
+says which families pad to a fixed window, but ggml-vulkan picks its variants
+from the matrix dimensions and the device's core count, so which shapes are
+distinct is a property of the pair, not of the model.
+
+Two things were tried and reverted, both of them ways to make the coverage
+exact rather than dense:
+
+- Rounding every utterance up to a rung. The encoder work it adds is charged
+  forever, where the compiles it avoids are paid once: a 3.2s utterance rounded
+  up to 5s cost granite 264ms against 80ms, and parakeet 46ms against 23ms.
+  Only very short audio is still lifted, to the shortest rung, because below
+  that the shape is genuinely unrehearsed: canary spent 2.4s on 0.4s of audio
+  and now spends 12ms.
+- Cutting long audio into rung-sized pieces. The models window long audio
+  themselves and do it better: cutting a 60 second clip at 30 gave "was
+  henceforth to be the victim." followed by "of a strange mystery." on every
+  family, including ones that declare no limit at all. `audio.Chunk` now cuts
+  only what a model would refuse outright.
+
+Past the last rung nothing is rehearsed. A dictation that long pays one compile
+the first time it meets a shape, and the driver's on-disk cache keeps it.
+
+This is the same problem serving stacks meet with dynamic shapes, and the same
+trade: vLLM captures CUDA graphs at a fixed set of batch sizes and pads to the
+next one, and cuDNN's autotuner re-benchmarks per input shape, which is why
+variable-length workloads are told to bucket. Their padding is cheap because a
+padded batch slot is idle work; ours is not, because a longer clip is more
+encoder work, which is why the ladder is dense but the padding is not.
+
+The NVIDIA driver keeps compiled shaders in `~/.cache/nvidia/GLCache`, so a
+warm run costs a few hundred milliseconds in the normal case, and only the
+first one after a driver update pays the compile. `cmd/warmbench` measures all
+of this: it rehearses one strategy per process and reports what each probe
+compiled.
 
 ## Model cache
 
@@ -122,14 +177,13 @@ world-readable, are the files that say what diktat is doing:
 - `diktat-model` - model file currently loaded
 - `diktat-daemon.log` - log; records lengths and timings, never the text
 
-In `$XDG_RUNTIME_DIR/diktat/`, which is per-user and mode 0700, are the two
-that hold what was actually said:
+In `$XDG_RUNTIME_DIR/diktat/`, which is per-user and mode 0700, is the file
+that holds what was actually said:
 
 - `last` - last transcribed text
-- `last.wav` - audio of the last capture, pre-normalization
 
 An unset `XDG_RUNTIME_DIR` is an error rather than a fallback to `/tmp`: the
-only fallback available is the place those two files exist to stay out of, and
+only fallback available is the place that file exists to stay out of, and
 a Wayland session always sets it, since the compositor's socket lives there.
 
 ## Build

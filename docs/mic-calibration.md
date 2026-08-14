@@ -60,18 +60,18 @@ RMS (above ~0.04) points at the model path.
 ## 3. Capture a fixed corpus
 
 To iterate on preprocessing without re-recording, capture a reference WAV
-once. The daemon already saves every capture, so dictate through it and keep
-what it wrote:
+once. The daemon does not keep captures, so record one deliberately, at the
+rate and shape the daemon asks its own device for:
 
 ```
-$ diktat toggle    # read the sentences below, then toggle again
-$ cp "$XDG_RUNTIME_DIR/diktat/last.wav" recording.wav
+$ pw-record --rate 16000 --channels 1 --format s16 recording.wav
 ```
 
-That file is the audio exactly as the model received it, and the daemon's log
-line reports the levels for it (`peak`, `rms`, and the gain that normalization
-applied), which is what a level meter would have told you. A peak near zero
-means no signal is reaching the capture path, even if system meters look fine.
+Dictating the same sentences through the daemon afterwards gives the levels to
+compare against: its log line reports `peak`, `rms`, and the gain that
+normalization applied, which is what a level meter would have told you. A peak
+near zero means no signal is reaching the capture path, even if system meters
+look fine.
 
 Read these five phonetically balanced sentences:
 
@@ -120,9 +120,9 @@ $ for m in $(diktat model --names); do
   done
 ```
 
-The daemon saves every capture to `$XDG_RUNTIME_DIR/diktat/last.wav` before
-normalization, so a bad transcription can be fed straight in without
-re-recording it.
+Captures are not kept: a recording of every dictation is only worth writing to
+disk if something replays it, and nothing does. Record a reference clip with
+`pw-record` when you want one to compare models against.
 
 Models are cached under `~/.cache/diktat/models` and never enter the nix build,
 so the runtime closure stays small. To switch the running daemon instead of

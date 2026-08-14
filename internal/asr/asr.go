@@ -27,8 +27,11 @@ var quiet sync.Once
 type Model struct {
 	s    *transcribe.Session
 	name string
-	// gpu is the device it landed on, or "" for CPU.
-	gpu string
+	// gpu is the device it landed on, or "" for CPU, and device is its index
+	// among the registered devices, which is what the runtime's per-device
+	// queries take.
+	gpu    string
+	device int
 	// bytes is what this model costs on its device, which is what a cache
 	// has to budget against. freeAtLoad is the device's free memory just
 	// before it was loaded, kept so Measure can take the difference later.
@@ -45,8 +48,13 @@ type Model struct {
 
 // Timings is where a transcription's time went. Encode dominates for whisper,
 // which runs it over a padded 30 second window however long the utterance.
+//
+// Other is the run's wall time less the three the library accounts for. It is
+// normally noise, and is not noise on a model whose graph the backend has not
+// compiled yet: that cost lands between the stages rather than inside one, so
+// without this the log shows a fast transcription that took five seconds.
 type Timings struct {
-	Mel, Encode, Decode time.Duration
+	Mel, Encode, Decode, Other time.Duration
 }
 
 // Load opens a GGUF model and keeps it open.
@@ -71,6 +79,7 @@ func Load(path string) (*Model, error) {
 		s:          s,
 		name:       strings.TrimSuffix(filepath.Base(path), ".gguf"),
 		gpu:        gpu,
+		device:     deviceIndex(opts),
 		bytes:      uint64(info.Size()),
 		freeAtLoad: before,
 		promptKind: promptKind(mm),
@@ -148,6 +157,21 @@ func (m *Model) promptOptions() transcribe.RunExtension {
 	return nil
 }
 
+// MaxAudio is the longest clip this model will take in one run, or 0 when it
+// has no practical limit because the family chunks internally. It is the
+// session's effective figure, so a context setting that lowers it is
+// accounted for.
+//
+// This is what bounds a recording, rather than a number the daemon picks:
+// whisper and parakeet chunk and answer 0, granite answers 6m24s.
+func (m *Model) MaxAudio() time.Duration {
+	limits, err := m.s.Limits()
+	if err != nil {
+		return 0
+	}
+	return limits.MaxAudio
+}
+
 // Languages are the language codes the model advertises accepting as a hint.
 // Empty means it advertises no set, which is not the same as accepting none.
 func (m *Model) Languages() ([]string, error) {
@@ -178,6 +202,15 @@ func (m *Model) Measure() {
 	}
 }
 
+// deviceIndex is which registered device a load with these options lands on.
+// Zero means the first, which is what the library picks unaided.
+func deviceIndex(opts *transcribe.LoadOptions) int {
+	if opts == nil {
+		return 0
+	}
+	return opts.GPUDevice
+}
+
 // deviceFree is free memory on the device a load with these options will
 // land on, or 0 when the backend does not report it.
 func deviceFree(opts *transcribe.LoadOptions) uint64 {
@@ -185,14 +218,35 @@ func deviceFree(opts *transcribe.LoadOptions) uint64 {
 	if err != nil {
 		return 0
 	}
-	i := 0
-	if opts != nil {
-		i = opts.GPUDevice
-	}
+	i := deviceIndex(opts)
 	if i < 0 || i >= len(devices) {
 		return 0
 	}
 	return devices[i].MemoryFree
+}
+
+// CompiledKernels is how many compute kernels this model's device has built
+// since the process started, or 0 on a backend that does not report it.
+//
+// The backend compiles a kernel the first time a graph needs a shape no
+// earlier graph did, which is the cost a warmup exists to pay. So a rise
+// across a transcription means that transcription was still compiling, and
+// the warmup did not cover what the user just said. It is the difference
+// between knowing and guessing about warmth, and it costs a device query.
+func (m *Model) CompiledKernels() uint64 {
+	return transcribe.CompiledKernels(m.device)
+}
+
+// CompiledKernelNames are those kernels, in the order they were built, or nil
+// on a backend that does not report them.
+//
+// The count says a shape was new; these say what was new about it. A backend
+// picks among variants of one operation by the dimensions it is given, so the
+// names distinguish which matmul tile size a length selected and whether its
+// dimensions took the aligned path. That is the band structure a warm ladder
+// has to cover, read off the backend instead of inferred from a sweep.
+func (m *Model) CompiledKernelNames() []string {
+	return transcribe.CompiledKernelNames(m.device)
 }
 
 // placement decides where compute runs, and names the device it chose.
@@ -231,6 +285,12 @@ func placement() (*transcribe.LoadOptions, string, error) {
 
 // Name is the model, as the file it was loaded from calls it.
 func (m *Model) Name() string { return m.name }
+
+// OnGPU reports whether compute landed on a GPU. Worth asking because the
+// costs that make a freshly loaded model slow, compiling shaders and
+// allocating device buffers, exist only there: on the CPU a first
+// transcription is measurably the same as the tenth.
+func (m *Model) OnGPU() bool { return m.gpu != "" }
 
 // Arch names the model and the device it runs on, because the difference
 // between GPU and CPU here is two orders of magnitude on the encoder and
@@ -285,11 +345,13 @@ func (m *Model) Transcribe(audio []float32) (string, error) {
 	if m.vocabulary != "" && m.promptKind != 0 {
 		opts = &transcribe.RunOptions{Family: m.promptOptions()}
 	}
+	t0 := time.Now()
 	res, err := m.s.Run(context.Background(), audio, opts)
 	if err != nil {
 		return "", err
 	}
 	m.timings = Timings{Mel: res.Timings.Mel, Encode: res.Timings.Encode, Decode: res.Timings.Decode}
+	m.timings.Other = time.Since(t0) - m.timings.Mel - m.timings.Encode - m.timings.Decode
 	return dropAnnotations(res.Text), nil
 }
 

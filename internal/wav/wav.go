@@ -19,8 +19,18 @@ func ReadWAV(path string) ([]float32, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
+	samples, rate, err := Decode(data)
+	if err != nil {
+		return nil, 0, fmt.Errorf("%s: %w", path, err)
+	}
+	return samples, rate, nil
+}
+
+// Decode reads a WAV that is already in memory, which is how the warmup takes
+// what a synthesiser wrote to its stdout.
+func Decode(data []byte) ([]float32, int, error) {
 	if len(data) < 12 || string(data[0:4]) != "RIFF" || string(data[8:12]) != "WAVE" {
-		return nil, 0, fmt.Errorf("%s: not a WAV file", path)
+		return nil, 0, fmt.Errorf("not a WAV file")
 	}
 
 	var audioFmt, channels, bits uint16
@@ -45,7 +55,7 @@ func ReadWAV(path string) ([]float32, int, error) {
 		off += 8 + sz + (sz & 1) // chunks are word-aligned
 	}
 	if pcm == nil {
-		return nil, 0, fmt.Errorf("%s: no data chunk", path)
+		return nil, 0, fmt.Errorf("no data chunk")
 	}
 
 	ch := int(channels)
@@ -76,13 +86,30 @@ func ReadWAV(path string) ([]float32, int, error) {
 			mono[i] = sum / float32(ch)
 		}
 	default:
-		return nil, 0, fmt.Errorf("%s: unsupported format %d at %d-bit", path, audioFmt, bits)
+		return nil, 0, fmt.Errorf("unsupported format %d at %d-bit", audioFmt, bits)
 	}
 	return mono, int(sampleRate), nil
 }
 
 // WriteWAV writes samples as a 16-bit PCM mono WAV at the given sample rate.
+// For the offline tools, which hold audio as float32; a capture is already
+// 16-bit and goes through WriteInt16 without a conversion.
 func WriteWAV(path string, samples []float32, rate int) error {
+	out := make([]int16, len(samples))
+	for i, s := range samples {
+		v := s * 32767
+		if v > 32767 {
+			v = 32767
+		} else if v < -32768 {
+			v = -32768
+		}
+		out[i] = int16(v)
+	}
+	return WriteInt16(path, out, rate)
+}
+
+// WriteInt16 writes samples as a 16-bit PCM mono WAV at the given sample rate.
+func WriteInt16(path string, samples []int16, rate int) error {
 	var b bytes.Buffer
 	dataLen := len(samples) * 2
 	b.WriteString("RIFF")
@@ -99,13 +126,7 @@ func WriteWAV(path string, samples []float32, rate int) error {
 	b.WriteString("data")
 	binary.Write(&b, binary.LittleEndian, uint32(dataLen))
 	for _, s := range samples {
-		v := s * 32767
-		if v > 32767 {
-			v = 32767
-		} else if v < -32768 {
-			v = -32768
-		}
-		binary.Write(&b, binary.LittleEndian, int16(v))
+		binary.Write(&b, binary.LittleEndian, s)
 	}
 	return os.WriteFile(path, b.Bytes(), 0644)
 }

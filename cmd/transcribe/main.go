@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/christian-oudard/diktat/internal/asr"
@@ -43,30 +44,52 @@ func main() {
 	fmt.Println(model.Arch())
 
 	for _, path := range fs.Args() {
-		samples, rate, err := wav.ReadWAV(path)
+		stored, err := load(path)
 		if err != nil {
 			log.Printf("%v", err)
 			continue
 		}
-		if rate != audio.SampleRate {
-			log.Printf("%s: sample rate %d != %d", path, rate, audio.SampleRate)
-			continue
-		}
-		peak, rms := audio.Levels(samples)
+		peak, rms := audio.Levels(stored)
 		gain := 1.0
 		if !*raw {
-			gain = audio.Normalize(samples)
+			gain = audio.Gain(stored)
 		}
 		t0 := time.Now()
-		text, err := model.Transcribe(samples)
-		if err != nil {
-			log.Printf("%s: transcribe: %v", path, err)
+		// Cut and padded like the daemon does it, so a file measures what an
+		// utterance of that length would cost, down to the graph shape.
+		limit := model.MaxAudio()
+		var parts []string
+		fail := false
+		for _, chunk := range audio.Chunk(stored, int(limit.Seconds())*audio.SampleRate) {
+			part, err := model.Transcribe(audio.Pad(audio.Floats(chunk, gain)))
+			if err != nil {
+				log.Printf("%s: transcribe: %v", path, err)
+				fail = true
+				break
+			}
+			parts = append(parts, part)
+		}
+		if fail {
 			continue
 		}
+		text := strings.Join(parts, " ")
 		// The first file pays for one-off setup, such as compiling the GPU
 		// shaders, so compare later ones when timing a backend.
 		fmt.Printf("%-24s %5.1fs  peak %.3f  rms %.4f  gain %4.1fx  %6s  ->  %q\n",
-			path, float64(len(samples))/float64(audio.SampleRate), peak, rms, gain,
+			path, float64(len(stored))/float64(audio.SampleRate), peak, rms, gain,
 			time.Since(t0).Round(time.Millisecond), text)
 	}
+}
+
+// load reads a wav into the form a capture is held in, so a file follows
+// exactly the path a recording does.
+func load(path string) ([]int16, error) {
+	samples, rate, err := wav.ReadWAV(path)
+	if err != nil {
+		return nil, err
+	}
+	if rate != audio.SampleRate {
+		return nil, fmt.Errorf("%s: sample rate %d != %d", path, rate, audio.SampleRate)
+	}
+	return audio.Ints(samples), nil
 }

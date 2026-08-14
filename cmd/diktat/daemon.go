@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"slices"
@@ -31,12 +32,6 @@ const (
 	statusRec  = `<span color="#fb4934">● REC</span>`
 	statusTx   = `<span color="#458588">● TX</span>`
 )
-
-// A recording nobody stops would grow the sample buffer forever, and the
-// encoder's cost grows with utterance length, so cut one off and transcribe
-// what we have. audio.MaxRecording is already past what the decoder can emit:
-// it stops after maxLen tokens, roughly a minute of speech.
-const maxRecording = audio.MaxRecording
 
 func runDaemon(args []string) {
 	if len(args) > 0 {
@@ -97,7 +92,6 @@ func runDaemon(args []string) {
 	}
 	defer rec.Close()
 
-	capCh := make(chan struct{}, 1)
 	d := &daemon{
 		model:    model,
 		models:   map[string]*asr.Model{modelDir: model},
@@ -106,6 +100,7 @@ func runDaemon(args []string) {
 		recorder: rec,
 		cfg:      cfg,
 		modelDir: modelDir,
+		loaded:   make(chan loadResult, 1),
 	}
 	defer d.closeModels()
 	warm(model)
@@ -113,13 +108,6 @@ func runDaemon(args []string) {
 	d.publishModel()
 	log.Printf("Model loaded: %s", model.Arch())
 	setStatus("")
-	d.capTimer = time.AfterFunc(maxRecording, func() {
-		select {
-		case capCh <- struct{}{}:
-		default:
-		}
-	})
-	d.capTimer.Stop()
 
 	for {
 		select {
@@ -132,23 +120,16 @@ func runDaemon(args []string) {
 					d.startRecording()
 				}
 			case syscall.SIGHUP:
-				d.reloadModel()
+				d.requestModel()
 			case syscall.SIGTERM, syscall.SIGINT:
-				d.capTimer.Stop()
 				d.mu.Lock()
 				d.recording = false
 				d.mu.Unlock()
 				log.Println("Daemon stopped.")
 				return
 			}
-		case <-capCh:
-			// The timer is stopped whenever recording stops, so this normally
-			// only fires mid-recording. Guard anyway against a stale tick that
-			// was already queued.
-			if d.isRecording() {
-				log.Printf("Hit the %s recording cap.", maxRecording)
-				d.stopRecording()
-			}
+		case res := <-d.loaded:
+			d.finishLoad(res)
 		}
 	}
 }
@@ -165,12 +146,26 @@ type daemon struct {
 	budget    uint64
 	recorder  *audio.Recorder
 	cfg       *config.Config
-	capTimer  *time.Timer
 	startedAt time.Time
 	modelDir  string
 
+	// loaded carries a model loaded off the main loop back to it, since that
+	// loop owns every field here. loading is what is being loaded now, and
+	// wanted is a model asked for while that was still in flight.
+	loaded  chan loadResult
+	loading string
+	wanted  string
+
 	mu        sync.Mutex
 	recording bool
+}
+
+// loadResult is a finished background load, successful or not.
+type loadResult struct {
+	dir   string
+	model *asr.Model
+	err   error
+	took  time.Duration
 }
 
 func (d *daemon) publishModel() {
@@ -179,49 +174,96 @@ func (d *daemon) publishModel() {
 	}
 }
 
-// reloadModel swaps in the model named in ipc.ModelFile. Models stay resident
-// once loaded, so switching back and forth costs nothing after the first load.
-// Recording is not interrupted: the capture buffer is independent of the model,
-// so a swap while armed just means the new model transcribes what was captured.
-func (d *daemon) reloadModel() {
+// requestModel acts on the model named in ipc.ModelFile. That file is a
+// request on the way in and a statement of fact on the way out, so it is put
+// back to the model actually loaded straight away: a switch is not a switch
+// until the new model can transcribe, and a 2 GB model takes tens of seconds
+// to get there.
+func (d *daemon) requestModel() {
 	raw, err := os.ReadFile(ipc.ModelFile)
 	if err != nil {
-		log.Printf("model reload: %v", err)
+		log.Printf("model request: %v", err)
 		return
 	}
 	dir := strings.TrimSpace(string(raw))
+	d.publishModel()
+	d.switchTo(dir)
+}
+
+// switchTo installs a model that is already resident, or starts fetching one
+// that is not. The fetch runs off the main loop, because the daemon's whole
+// job is to answer a keypress: waiting for a load here would mean pressing to
+// talk and getting nothing until it finished. The old model keeps serving in
+// the meantime, and the loaded model arrives back on d.loaded, which is read
+// by the same loop that owns every field here.
+//
+// The cost of that: a transcription started mid-load shares the card with the
+// load, so it is slower than it would be alone, and asr.Load measures a
+// model's size from the device's free memory either side of it, which a
+// concurrent transcription inflates. Both are worth a responsive keypress.
+func (d *daemon) switchTo(dir string) {
 	if dir == d.modelDir {
 		log.Printf("Already using %s", dir)
 		return
 	}
-
 	if model, ok := d.models[dir]; ok {
-		d.model, d.modelDir = model, dir
-		d.touch(dir)
+		d.install(dir, model)
 		log.Printf("Model now %s, already resident", model.Arch())
-		d.restoreStatus()
 		return
 	}
+	if d.loading != "" {
+		// One load at a time: two at once would compete for the same card,
+		// and the second ask is the one that will be honoured anyway.
+		d.wanted = dir
+		log.Printf("Queued %s behind the load in flight", dir)
+		return
+	}
+	d.loading = dir
+	d.restoreStatus()
+	log.Printf("Loading %s in the background", dir)
+	go func() {
+		t0 := time.Now()
+		model, err := asr.Load(dir)
+		if err == nil {
+			// Warm first, then hand over the hints: an instructed audio-LLM
+			// told to expect terms and then given warm audio has been seen
+			// to invent its way to the decode budget.
+			warm(model)
+			d.applyVocabulary(model)
+		}
+		d.loaded <- loadResult{dir: dir, model: model, err: err, took: time.Since(t0)}
+	}()
+}
 
-	setStatus(statusLoad)
-	t0 := time.Now()
-	model, err := asr.Load(dir)
-	if err != nil {
-		// Keep serving with the model we have, and put the file back so it
-		// keeps describing what is actually loaded.
-		log.Printf("model reload %s: %v", dir, err)
-		d.publishModel()
-		d.restoreStatus()
-		return
+// finishLoad installs what the background load produced, and then honours a
+// switch asked for while it was running.
+func (d *daemon) finishLoad(res loadResult) {
+	d.loading = ""
+	if res.err != nil {
+		// Keep serving with the model we have. The published model still
+		// names it, since a request never overwrote it.
+		log.Printf("model load %s: %v", res.dir, res.err)
+	} else {
+		d.models[res.dir] = res.model
+		d.install(res.dir, res.model)
+		log.Printf("Model now %s in %s, %d resident, %s cached",
+			res.model.Arch(), res.took.Round(time.Millisecond),
+			len(d.models), human.Bytes(d.cached()))
 	}
-	warm(model)
-	d.applyVocabulary(model)
-	d.models[dir] = model
+	if next := d.wanted; next != "" {
+		d.wanted = ""
+		d.switchTo(next)
+	}
+}
+
+// install makes a resident model the one in use. Recording is not
+// interrupted: the capture buffer is independent of the model, so a swap
+// while armed just means the new model transcribes what was captured.
+func (d *daemon) install(dir string, model *asr.Model) {
 	d.model, d.modelDir = model, dir
 	d.touch(dir)
 	d.evict()
-	log.Printf("Model now %s in %s, %d resident, %s cached",
-		model.Arch(), time.Since(t0).Round(time.Millisecond), len(d.models), human.Bytes(d.cached()))
+	d.publishModel()
 	d.restoreStatus()
 }
 
@@ -308,54 +350,106 @@ func cacheBudget(cfg *config.Config) uint64 {
 	return 4 << 30
 }
 
-// warmSeconds is how much audio the warmup pretends to have heard. It wants
-// to be near a real utterance: the models that encode only what they were
-// given build a graph sized to the input, so warming on one second leaves
-// the shapes a real utterance needs still to be compiled, which was the
-// whole point of warming.
-const warmSeconds = 4
-
-// warm runs a throwaway transcription, because loading a model is not the
-// same as being ready to use it: the Vulkan backend defers compiling its
-// shaders, and ggml defers allocating its compute buffers, to the first
-// graph run. The daemon is resident and loads eagerly, so pay that here
-// rather than on the first thing the user says.
+// warm rehearses the ladder of lengths in internal/audio, because loading a
+// model is not the same as being ready to use it: the Vulkan backend defers
+// compiling its shaders, and ggml defers allocating its compute buffers, to
+// the first graph run of each shape, and the shape follows the length of the
+// audio. The daemon is resident and loads eagerly, so pay that here rather
+// than on the first thing the user says.
 //
-// The input is faint noise rather than digital silence, which costs the same
-// (measured: parakeet and whisper both decode silence at full price, so
-// neither skips it) and cannot be skipped by a family that does look for
-// speech before decoding.
+// The cost is one throwaway transcription per rung, a few hundred
+// milliseconds in total once the driver has the shaders on disk, and it runs
+// off the main loop either way.
+//
+// It rehearses on speech rather than on a signal because half the cost is in
+// the decoder, whose shapes follow the number of tokens that come out. Noise
+// emits none, so under it a 20s utterance on granite still paid 5.3s of
+// decode; on speech, 57ms.
+//
+// There is nothing to warm on the CPU: with no shaders to compile, seven warm
+// strategies measured identically to no warmup at all.
 func warm(m *asr.Model) {
-	t0 := time.Now()
-	// A truncated warmup is a success: the graph ran, which is the entire
-	// point, and the transcript is thrown away either way. An audio-LLM
-	// always truncates here, having been handed four seconds of noise to
-	// describe, and skipping the measurement below over that would leave the
-	// cache budgeting the largest models by their file size.
-	if _, err := m.Transcribe(warmupAudio()); err != nil && !errors.Is(err, asr.ErrTruncated) {
+	if !m.OnGPU() {
+		return
+	}
+	speech, err := warmSpeech()
+	if err != nil {
 		log.Printf("warmup: %v", err)
 		return
 	}
-	// Loading allocated the weights; that run allocated the buffers, which
-	// are the larger half. Now is when the model's real cost is knowable.
+	t0 := time.Now()
+	rungs := audio.Warm(m.MaxAudio())
+	// Per rung rather than a total, since the total cannot say which rung was
+	// worth running. A rung that compiles nothing on every model is one to
+	// drop, and a rung that compiles on a machine where the ladder was never
+	// measured is the ladder being too sparse for that GPU.
+	work := make([]string, 0, len(rungs))
+	before := m.CompiledKernels()
+	for _, secs := range rungs {
+		rung := time.Now()
+		// A truncated warmup is a success: the graph ran, which is the entire
+		// point, and the transcript is thrown away either way. An audio-LLM
+		// can talk its way to the decode budget on a rehearsal, and giving up
+		// there would leave the cache budgeting the largest models by their
+		// file size.
+		if _, err := m.Transcribe(fit(speech, secs)); err != nil && !errors.Is(err, asr.ErrTruncated) {
+			log.Printf("warmup %ds: %v", secs, err)
+			return
+		}
+		compiled := m.CompiledKernels() - before
+		before += compiled
+		work = append(work, fmt.Sprintf("%ds:%s/%dk", secs,
+			time.Since(rung).Round(time.Millisecond), compiled))
+	}
+	// Loading allocated the weights; those runs allocated the buffers, which
+	// are the larger half and grow with the longest rung. Now is when the
+	// model's real cost is knowable.
 	m.Measure()
 	t := m.Timings()
-	log.Printf("Warmed up in %s (encode %s, decode %s), %s resident",
-		time.Since(t0).Round(time.Millisecond),
-		t.Encode.Round(time.Millisecond), t.Decode.Round(time.Millisecond),
-		human.Bytes(m.Bytes()))
+	log.Printf("Warmed in %s: %s, %s resident (last rung: mel %s, encode %s, decode %s, other %s)",
+		time.Since(t0).Round(time.Millisecond), strings.Join(work, " "), human.Bytes(m.Bytes()),
+		t.Mel.Round(time.Millisecond), t.Encode.Round(time.Millisecond),
+		t.Decode.Round(time.Millisecond), t.Other.Round(time.Millisecond))
 }
 
-// warmupAudio is quiet broadband noise, loud enough to be audio rather than
-// nothing and far too quiet to be words.
-func warmupAudio() []float32 {
-	buf := make([]float32, warmSeconds*audio.SampleRate)
-	// A cheap deterministic wobble; nothing here needs randomness, and a
-	// fixed pattern keeps one load comparable with the next.
-	for i := range buf {
-		buf[i] = float32((i%17)-8) / 8000
+// warmSentences are the Harvard sentences from docs/mic-calibration.md, which
+// are phonetically balanced and already in the repo for the microphone check.
+const warmSentences = "The birch canoe slid on the smooth planks. " +
+	"Glue the sheet to the dark blue background. " +
+	"These days a chicken leg is a rare dish. " +
+	"The juice of lemons makes fine punch. " +
+	"A pod of whales sped past the quiet cove."
+
+// warmSpeech renders those sentences once and keeps them, since every load
+// this session warms on the same audio and the buffer is under 2 MB.
+//
+// Synthesised rather than shipped: a wav in the repo is data, and the daemon
+// only needs audio that provokes a realistic number of tokens. Measured,
+// espeak-ng and a neural synthesiser warmed identically, 725ms against 722ms
+// on the probe that matters, so the cheap one wins.
+var warmSpeech = sync.OnceValues(func() ([]float32, error) {
+	// espeak-ng renders at its voice's rate whatever we ask for, so the rate
+	// comes back from the header rather than being assumed.
+	wave, err := exec.Command("espeak-ng", "-v", "en-us", "-s", "150", "--stdout", warmSentences).Output()
+	if err != nil {
+		return nil, fmt.Errorf("espeak-ng: %w", err)
 	}
-	return buf
+	samples, rate, err := wav.Decode(wave)
+	if err != nil {
+		return nil, err
+	}
+	return audio.Resample(samples, rate, audio.SampleRate), nil
+})
+
+// fit cuts or loops speech to exactly secs of audio. Looping is honest here:
+// the rung is about the shape of the graph, and a repeated sentence produces
+// tokens at the same rate as a longer one would.
+func fit(speech []float32, secs int) []float32 {
+	out := make([]float32, secs*audio.SampleRate)
+	for i := range out {
+		out[i] = speech[i%len(speech)]
+	}
+	return out
 }
 
 func (d *daemon) closeModels() {
@@ -364,12 +458,19 @@ func (d *daemon) closeModels() {
 	}
 }
 
+// restoreStatus puts the bar back to whatever is true now that whatever it
+// was showing is over. A load in the background outranks idle but not
+// recording: it is worth knowing a switch is pending, and worth more to know
+// the mic is live.
 func (d *daemon) restoreStatus() {
-	if d.isRecording() {
+	switch {
+	case d.isRecording():
 		setStatus(statusRec)
-		return
+	case d.loading != "":
+		setStatus(statusLoad)
+	default:
+		setStatus("")
 	}
-	setStatus("")
 }
 
 func (d *daemon) isRecording() bool {
@@ -384,34 +485,29 @@ func (d *daemon) startRecording() {
 	d.mu.Lock()
 	d.recording = true
 	d.mu.Unlock()
-	d.capTimer.Reset(maxRecording)
 	setStatus(statusRec)
 	log.Println("Recording...")
 }
 
 func (d *daemon) stopRecording() {
-	d.capTimer.Stop()
 	samples := d.recorder.Stop()
 	d.mu.Lock()
 	d.recording = false
 	d.mu.Unlock()
 
 	if len(samples) == 0 {
-		setStatus("")
+		d.restoreStatus()
 		log.Println("No audio.")
 		return
 	}
 
 	setStatus(statusTx)
-	// Before Normalize, which rewrites samples in place.
-	if path, err := ipc.LastAudio(); err != nil {
-		log.Printf("last-audio: %v", err)
-	} else if err := wav.WriteWAV(path, samples, audio.SampleRate); err != nil {
-		log.Printf("last-audio write: %v", err)
-	}
 	peak, rms := audio.Levels(samples)
 	silent := audio.IsSilent(samples)
-	gain := audio.Normalize(samples)
+	// One gain for the whole capture, applied to each piece as it is
+	// converted, so a recording split into chunks does not change loudness
+	// halfway through.
+	gain := audio.Gain(samples)
 	// Audio duration is derived from the sample count at the rate we asked the
 	// device for. If it drifts from the wall clock, the device is not actually
 	// giving us that rate, and the model is seeing time-stretched speech.
@@ -428,11 +524,37 @@ func (d *daemon) stopRecording() {
 	}
 
 	t0 := time.Now()
-	text, err := d.model.Transcribe(samples)
-	if err != nil {
-		log.Printf("transcribe: %v", err)
-		setStatus("")
-		return
+	kernels := d.model.CompiledKernelNames()
+	// Only what the model will refuse outright gets cut, at the quietest moment
+	// near the limit. Most families take the whole utterance and window it
+	// themselves, which they do better than a cut here can: cutting at 30s cost
+	// a broken sentence at every seam even on models that had no limit at all.
+	limit := d.model.MaxAudio()
+	chunks := audio.Chunk(samples, int(limit.Seconds())*audio.SampleRate)
+	if len(chunks) > 1 {
+		log.Printf("Over the model's %s limit, transcribing in %d pieces", limit, len(chunks))
+	}
+	var parts []string
+	for _, chunk := range chunks {
+		part, err := d.model.Transcribe(audio.Pad(audio.Floats(chunk, gain)))
+		if err != nil {
+			log.Printf("transcribe: %v", err)
+			d.restoreStatus()
+			return
+		}
+		if part != "" {
+			parts = append(parts, part)
+		}
+	}
+	text := strings.Join(parts, " ")
+	// Anything compiled here is a shape the warmup did not cover, and it is
+	// the reason this transcription was slower than the next one at the same
+	// length will be. Expected past the last warm rung, a bug below it, and
+	// named either way, since the name says which variant the ladder missed.
+	if compiled := d.model.CompiledKernelNames()[len(kernels):]; len(compiled) > 0 {
+		log.Printf("Compiled %d kernels mid-transcription, on %.1fs of audio: %s",
+			len(compiled), float64(len(samples))/float64(audio.SampleRate),
+			strings.Join(compiled, " "))
 	}
 	// The text itself is deliberately not logged: the log is a long-lived file
 	// in /tmp and everything dictated would accumulate in it, which is also
@@ -442,9 +564,10 @@ func (d *daemon) stopRecording() {
 	// it, which is what tells a slow model from a cold one: a first
 	// utterance that spends its time in encode is still compiling shaders.
 	tm := d.model.Timings()
-	log.Printf("Transcribed in %s (encode %s, decode %s): %d chars",
-		time.Since(t0).Round(time.Millisecond),
-		tm.Encode.Round(time.Millisecond), tm.Decode.Round(time.Millisecond), len(text))
+	log.Printf("Transcribed in %s (mel %s, encode %s, decode %s, other %s): %d chars",
+		time.Since(t0).Round(time.Millisecond), tm.Mel.Round(time.Millisecond),
+		tm.Encode.Round(time.Millisecond), tm.Decode.Round(time.Millisecond),
+		tm.Other.Round(time.Millisecond), len(text))
 
 	if text != "" {
 		out := text + " "
@@ -459,7 +582,7 @@ func (d *daemon) stopRecording() {
 		}
 	}
 
-	setStatus("")
+	d.restoreStatus()
 }
 
 func (d *daemon) appendHistory(text string) {

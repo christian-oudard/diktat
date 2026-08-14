@@ -17,6 +17,8 @@
       # External CLIs the daemon shells out to.
       runtimeDeps = [
         pkgs.wtype
+        # The warmup rehearses on synthesised speech; see warm() in daemon.go.
+        pkgs.espeak-ng
         pkgs.wl-clipboard
         pkgs.sway
       ];

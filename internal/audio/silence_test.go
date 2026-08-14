@@ -9,29 +9,29 @@ import (
 // to transcribe silence invents something and runs to its decode budget.
 func TestIsSilent(t *testing.T) {
 	n := 3 * SampleRate
-	speech := make([]float32, n)
+	speech := make([]int16, n)
 	for i := range speech {
-		speech[i] = float32(0.3 * math.Sin(float64(i)*0.05))
+		speech[i] = int16(0.3 * full * math.Sin(float64(i)*0.05))
 	}
-	quiet := make([]float32, n)
+	quiet := make([]int16, n)
 	for i := range speech {
 		quiet[i] = speech[i] / 20 // 26 dB down; still words
 	}
-	// The daemon's own warmup pattern, which is what exposed this.
-	noise := make([]float32, 4*SampleRate)
+	// The signal the warmup used to use, which is what exposed this.
+	noise := make([]int16, 4*SampleRate)
 	for i := range noise {
-		noise[i] = float32((i%17)-8) / 8000
+		noise[i] = int16(float64((i%17)-8) / 8000 * full)
 	}
 
 	for _, c := range []struct {
 		name string
-		pcm  []float32
+		pcm  []int16
 		want bool
 	}{
 		{"speech", speech, false},
 		{"quiet speech", quiet, false},
 		{"warmup noise", noise, true},
-		{"digital silence", make([]float32, n), true},
+		{"digital silence", make([]int16, n), true},
 		{"empty", nil, true},
 	} {
 		if got := IsSilent(c.pcm); got != c.want {

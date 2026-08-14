@@ -26,16 +26,17 @@ const (
 	ModelFile = "/tmp/diktat-model"
 )
 
-// LastText is the last transcription and LastAudio the capture it came from,
-// kept so a bad transcript can be replayed through cmd/transcribe instead of
-// being re-recorded.
+// LastText is the last transcription, kept so `diktat repeat` can type it
+// again.
 //
-// These two hold what was actually said, so they do not live in /tmp, where
-// mode 0644 puts every dictated sentence and a recording of the voice that
-// said it within reach of anything else on the machine. XDG_RUNTIME_DIR is
-// per-user and mode 0700.
-func LastText() (string, error)  { return sessionFile("last") }
-func LastAudio() (string, error) { return sessionFile("last.wav") }
+// It holds what was actually said, so it does not live in /tmp, where mode
+// 0644 puts every dictated sentence within reach of anything else on the
+// machine. XDG_RUNTIME_DIR is per-user and mode 0700.
+//
+// The capture itself is not kept. Writing a recording of someone's voice on
+// every dictation earns its keep only if the recording gets replayed, and
+// nothing here replays it: cmd/transcribe takes files someone chose to make.
+func LastText() (string, error) { return sessionFile("last") }
 
 // sessionFile names a file in the per-user runtime directory, creating it.
 //
