@@ -211,6 +211,14 @@ func (d *daemon) switchTo(dir string) {
 		log.Printf("Model now %s, already resident", model.Arch())
 		return
 	}
+	if dir == d.loading {
+		// Asking twice for the model already on its way. Worth its own case:
+		// the published file names the model still in use, so a second ask
+		// looks new, and queueing it would load nothing and then switch to
+		// what had just been switched to.
+		log.Printf("Already loading %s", dir)
+		return
+	}
 	if d.loading != "" {
 		// One load at a time: two at once would compete for the same card,
 		// and the second ask is the one that will be honoured anyway.
@@ -250,8 +258,11 @@ func (d *daemon) finishLoad(res loadResult) {
 			res.model.Arch(), res.took.Round(time.Millisecond),
 			len(d.models), human.Bytes(d.cached()))
 	}
-	if next := d.wanted; next != "" {
-		d.wanted = ""
+	// A request made during the load, unless it asked for what the load just
+	// installed, which is what asking twice for a slow model looks like.
+	next := d.wanted
+	d.wanted = ""
+	if next != "" && next != d.modelDir {
 		d.switchTo(next)
 	}
 }
