@@ -35,21 +35,57 @@ type Spec struct {
 	Langs []string
 }
 
-// listedLangs is how many codes are worth spelling out before a count says
-// more than the list does. Five fits the column; eight does not.
-const listedLangs = 5
-
-// Languages renders the language support for the menu.
+// Languages renders the language support for the menu, as the reach of the
+// set and its size.
+//
+// Someone choosing a model wants to know whether it will handle what they
+// speak, and past three or four codes a list answers that worse than a name
+// for the set does: "en +29" says nothing about whether Japanese is in there,
+// and neither does the eight codes that would fit the column. Naming the reach
+// says which question to stop asking, and the count says how thoroughly.
 func (s Spec) Languages() string {
 	switch {
 	case len(s.Langs) == 0:
-		return "all"
-	case len(s.Langs) <= listedLangs:
-		return strings.Join(s.Langs, " ")
+		// A model that lists a hundred, which no column can hold and no
+		// caveat improves on.
+		return "Worldwide"
+	case len(s.Langs) == 1:
+		return language(s.Langs[0])
+	case european(s.Langs):
+		return fmt.Sprintf("European (%d)", len(s.Langs))
 	}
-	// Past that, the first code and a count: which eight is not something a
-	// menu column can usefully say, and the model's own card can.
-	return fmt.Sprintf("%s +%d", s.Langs[0], len(s.Langs)-1)
+	return fmt.Sprintf("Worldwide (%d)", len(s.Langs))
+}
+
+// europeanCodes are the languages of Europe as this menu counts them. The
+// borderline cases do not decide anything here: every model that advertises
+// Turkish also advertises Japanese and Chinese, so it reads as worldwide
+// whichever way Turkish is counted.
+var europeanCodes = map[string]bool{
+	"bg": true, "cs": true, "da": true, "de": true, "el": true, "en": true,
+	"es": true, "et": true, "fi": true, "fr": true, "hr": true, "hu": true,
+	"it": true, "lt": true, "lv": true, "mk": true, "mt": true, "nl": true,
+	"pl": true, "pt": true, "ro": true, "ru": true, "sk": true, "sl": true,
+	"sv": true, "uk": true,
+}
+
+func european(langs []string) bool {
+	for _, code := range langs {
+		if !europeanCodes[code] {
+			return false
+		}
+	}
+	return true
+}
+
+// language names a lone language, since a model that takes exactly one should
+// say which rather than make its code do the work. Only the codes that appear
+// alone in the menu are named; anything else falls back to the code.
+func language(code string) string {
+	if name, ok := map[string]string{"en": "English"}[code]; ok {
+		return name
+	}
+	return code
 }
 
 // Default is what the daemon loads when not told otherwise. Still whisper,
@@ -106,9 +142,9 @@ const Default = "whisper-tiny.en"
 //
 // So the flat cost is a liability up to about 30 seconds and an asset past
 // it. Dictation is mostly short utterances, which is why the menu leads with
-// the models that scale with the audio; the 60 second recording cap is the
-// only place the crossover is reachable. One whisper stays for the languages
-// the others lack.
+// the models that scale with the audio, and the crossover is only reachable
+// by someone talking for half a minute without stopping. One whisper stays
+// for the languages the others lack.
 //
 // Only whisper takes vocabulary hints, which is most of its remaining
 // argument here: it is the one family the library can condition at all. So

@@ -11,10 +11,14 @@ func TestLanguagesRendering(t *testing.T) {
 		langs []string
 		want  string
 	}{
-		{nil, "all"},
-		{[]string{}, "all"},
-		{[]string{"en"}, "en"},
-		{[]string{"en", "de", "es", "fr"}, "en de es fr"},
+		{nil, "Worldwide"},
+		{[]string{}, "Worldwide"},
+		{[]string{"en"}, "English"},
+		{[]string{"en", "de", "es", "fr"}, "European (4)"},
+		{[]string{"en", "de", "es", "fr", "pt"}, "European (5)"},
+		// One language from outside Europe is enough: the point of the label
+		// is that nothing has been left out of it.
+		{[]string{"en", "de", "ja"}, "Worldwide (3)"},
 	} {
 		if got := (Spec{Langs: c.langs}).Languages(); got != c.want {
 			t.Errorf("Languages(%v) = %q, want %q", c.langs, got, c.want)
