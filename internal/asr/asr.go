@@ -84,6 +84,14 @@ func Load(path string) (*Model, error) {
 // which is a floor rather than an estimate.
 func (m *Model) Bytes() uint64 { return m.bytes }
 
+// ErrTruncated means the decode hit the model's output budget before it
+// finished. The transcript that comes back is real but incomplete.
+//
+// An audio-LLM reaches it on input with no speech in it: given noise it has
+// nothing to transcribe and generates until the budget runs out. That makes
+// it the expected answer to a warmup, and a real problem for an utterance.
+var ErrTruncated = transcribe.ErrOutputTruncated
+
 // Timings is where the last transcription's time went.
 func (m *Model) Timings() Timings { return m.timings }
 
@@ -111,6 +119,12 @@ func promptKind(m *transcribe.Model) transcribe.ExtKind {
 	if !m.Supports(transcribe.FeatureInitialPrompt) {
 		return 0
 	}
+	// Whisper conditions its decoder on the words; voxtral is an audio-LLM
+	// and is asked to follow an instruction. Both work, and both are worth
+	// having, but only where there is speech to transcribe: given silence an
+	// instructed audio-LLM invents something and runs to its decode budget.
+	// The daemon warms before it applies these, and refuses to transcribe a
+	// silent capture, which is what that costs.
 	for _, kind := range []transcribe.ExtKind{transcribe.KindWhisperRun, transcribe.KindVoxtralRun} {
 		if m.AcceptsExtension(transcribe.SlotRun, kind) {
 			return kind
@@ -125,8 +139,8 @@ func (m *Model) promptOptions() transcribe.RunExtension {
 	case transcribe.KindWhisperRun:
 		return &transcribe.WhisperRunOptions{InitialPrompt: m.vocabulary}
 	case transcribe.KindVoxtralRun:
-		// Voxtral takes an instruction rather than prior context, so the
-		// words have to arrive as something to follow.
+		// An instruction, since that is what this family takes. Measured
+		// with thirty terms over real speech: transcribes correctly.
 		return &transcribe.VoxtralRunOptions{
 			Instruction: "Transcribe the audio. Expected terms: " + m.vocabulary,
 		}

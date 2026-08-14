@@ -30,6 +30,19 @@ func Levels(samples []float32) (peak, rms float64) {
 	return peak, rms
 }
 
+// IsSilent reports whether a capture holds no speech worth transcribing,
+// using the same reference level and floor Normalize declines to amplify at.
+//
+// Worth asking before running a model rather than after: an audio-LLM given
+// silence has nothing to transcribe and describes something instead. Voxtral
+// answers four seconds of faint noise with a timestamped monologue about a
+// talk that never happened, and keeps going until its decode budget stops it.
+// The encoder-decoder families are cheaper about it but still emit their
+// non-speech markers.
+func IsSilent(samples []float32) bool {
+	return percentileAbs(samples, normPercentile) < normFloor
+}
+
 // Normalize scales samples so a high percentile of their amplitude reaches
 // normTargetPeak, boosting quiet mic input that Moonshine would otherwise
 // transcribe as empty. Using a percentile rather than the true peak ignores

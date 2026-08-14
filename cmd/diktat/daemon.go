@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -107,8 +108,8 @@ func runDaemon(args []string) {
 		modelDir: modelDir,
 	}
 	defer d.closeModels()
-	d.applyVocabulary(model)
 	warm(model)
+	d.applyVocabulary(model)
 	d.publishModel()
 	log.Printf("Model loaded: %s", model.Arch())
 	setStatus("")
@@ -213,8 +214,8 @@ func (d *daemon) reloadModel() {
 		d.restoreStatus()
 		return
 	}
-	d.applyVocabulary(model)
 	warm(model)
+	d.applyVocabulary(model)
 	d.models[dir] = model
 	d.model, d.modelDir = model, dir
 	d.touch(dir)
@@ -326,7 +327,12 @@ const warmSeconds = 4
 // speech before decoding.
 func warm(m *asr.Model) {
 	t0 := time.Now()
-	if _, err := m.Transcribe(warmupAudio()); err != nil {
+	// A truncated warmup is a success: the graph ran, which is the entire
+	// point, and the transcript is thrown away either way. An audio-LLM
+	// always truncates here, having been handed four seconds of noise to
+	// describe, and skipping the measurement below over that would leave the
+	// cache budgeting the largest models by their file size.
+	if _, err := m.Transcribe(warmupAudio()); err != nil && !errors.Is(err, asr.ErrTruncated) {
 		log.Printf("warmup: %v", err)
 		return
 	}
@@ -402,6 +408,7 @@ func (d *daemon) stopRecording() {
 		log.Printf("last-audio write: %v", err)
 	}
 	peak, rms := audio.Levels(samples)
+	silent := audio.IsSilent(samples)
 	gain := audio.Normalize(samples)
 	// Audio duration is derived from the sample count at the rate we asked the
 	// device for. If it drifts from the wall clock, the device is not actually
@@ -409,6 +416,14 @@ func (d *daemon) stopRecording() {
 	log.Printf("Transcribing %.1fs (wall %.1fs, peak %.3f rms %.4f gain %.1fx)...",
 		float64(len(samples))/float64(audio.SampleRate), time.Since(d.startedAt).Seconds(),
 		peak, rms, gain)
+
+	// Nothing was said. Every family invents something when asked to
+	// transcribe silence, and the inventions cost more than the check does.
+	if silent {
+		log.Printf("Nothing to transcribe: the capture is silent.")
+		setStatus("")
+		return
+	}
 
 	t0 := time.Now()
 	text, err := d.model.Transcribe(samples)
