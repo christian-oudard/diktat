@@ -138,6 +138,14 @@ exact rather than dense:
   family, including ones that declare no limit at all. `audio.Chunk` now cuts
   only what a model would refuse outright.
 
+Warming a model is not the whole of being warm. A card left alone drops its
+clocks, so the first utterance after a pause pays to bring them back: on
+granite, 25 seconds of quiet turned a 993ms encode into what costs 27ms back
+to back. The daemon spends the time someone is speaking on a throwaway one
+second run, started when recording starts, which absorbs all of it and hides
+behind the speech. A model is single-threaded, so anything that touches one
+waits for that run first.
+
 Past the last rung nothing is rehearsed. A dictation that long pays one compile
 the first time it meets a shape, and the driver's on-disk cache keeps it.
 

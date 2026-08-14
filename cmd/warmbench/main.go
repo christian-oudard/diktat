@@ -40,6 +40,14 @@ func main() {
 	clip := fs.String("clip", "", "wav of real speech, looped to length for probes")
 	warmClip := fs.String("warmclip", "", "wav to warm on, when it should differ from the probes")
 	pad := fs.Bool("pad", true, "round probes up to a warmed length, as the daemon does")
+	// Dictation arrives in bursts with quiet between, where a bench runs
+	// flat out. If a card drops its clocks when idle, only the first shape
+	// tells them apart.
+	idle := fs.Duration("idle", 0, "wait this long before each probe, as a user pausing does")
+	// The daemon knows a transcription is coming as soon as recording starts,
+	// which is seconds before the audio is ready. This asks whether spending
+	// that time on a throwaway run is worth it.
+	ramp := fs.Duration("ramp", 0, "run this much throwaway audio after idling, before the probe")
 	fs.Parse(os.Args[1:])
 
 	path := models.Resolve(*name)
@@ -92,6 +100,10 @@ func main() {
 			kind = "sawtooth"
 		}
 		for pass := 1; pass <= *passes; pass++ {
+			time.Sleep(*idle)
+			if *ramp > 0 {
+				run(model, "ramp", kind, ramp.Seconds(), pass, speech, *pad)
+			}
 			// Probes go through the padding the daemon applies, so a probe
 			// asks what an utterance of that length costs rather than what a
 			// shape the daemon never uses would cost.

@@ -156,6 +156,12 @@ type daemon struct {
 	loading string
 	wanted  string
 
+	// waking is closed when the run that woke the GPU at the start of a
+	// recording finishes, and woke is the model it ran on, which is not
+	// necessarily the model in use by the time it lands.
+	waking <-chan struct{}
+	woke   *asr.Model
+
 	mu        sync.Mutex
 	recording bool
 }
@@ -339,6 +345,8 @@ func overBudget(lru []string, sizes map[string]uint64, budget uint64) []string {
 // context and compute buffers cost more than the weights do for a small
 // model, so a few switches can fill it.
 func (d *daemon) evict() {
+	// Nothing may be closed while the wake run holds a model.
+	d.settle()
 	sizes := make(map[string]uint64, len(d.models))
 	for dir, m := range d.models {
 		sizes[dir] = m.Bytes()
@@ -470,6 +478,7 @@ func fit(speech []float32, secs int) []float32 {
 }
 
 func (d *daemon) closeModels() {
+	d.settle()
 	for _, m := range d.models {
 		m.Close()
 	}
@@ -502,12 +511,49 @@ func (d *daemon) startRecording() {
 	d.mu.Lock()
 	d.recording = true
 	d.mu.Unlock()
+	d.wake()
 	setStatus(statusRec)
 	log.Println("Recording...")
 }
 
+// wake spends the time someone is speaking on a throwaway run, because a card
+// left alone drops its clocks and the next graph pays to bring them back. That
+// cost lands on the user: on granite, an utterance 25 seconds after the last
+// one encoded in 993ms where the same utterance back to back encoded in 27ms.
+// A single short run absorbs it, and it has seconds of speech to hide behind.
+//
+// The run is a length the ladder already rehearsed, so it compiles nothing,
+// and it is thrown away. Errors are ignored: this is an optimisation, and the
+// transcription that follows will report anything real.
+func (d *daemon) wake() {
+	if !d.model.OnGPU() || d.waking != nil {
+		return
+	}
+	speech, err := warmSpeech()
+	if err != nil {
+		return
+	}
+	done := make(chan struct{})
+	d.waking, d.woke = done, d.model
+	go func() {
+		defer close(done)
+		d.woke.Transcribe(fit(speech, 1))
+	}()
+}
+
+// settle waits for a wake run to finish. A model is single-threaded, and the
+// wake holds one, so nothing else may touch a model until it is done.
+func (d *daemon) settle() {
+	if d.waking == nil {
+		return
+	}
+	<-d.waking
+	d.waking, d.woke = nil, nil
+}
+
 func (d *daemon) stopRecording() {
 	samples := d.recorder.Stop()
+	d.settle()
 	d.mu.Lock()
 	d.recording = false
 	d.mu.Unlock()
