@@ -112,14 +112,25 @@ falls back to the file size. `overBudget` in `daemon.go` picks what to drop,
 oldest first, and never the model in use, so too small a budget degrades to
 keeping exactly one model rather than to keeping none.
 
-## IPC files (in `/tmp`)
+## IPC files
+
+Split by what they hold rather than by who writes them. In `/tmp`, which is
+world-readable, are the files that say what diktat is doing:
 
 - `diktat-daemon.pid` - daemon PID
-- `diktat-status` - Pango markup status string
-- `diktat-last` - last transcribed text
-- `diktat-last.wav` - audio of the last capture, pre-normalization
+- `diktat-status` - Pango markup status string, read by the bar
 - `diktat-model` - model file currently loaded
-- `diktat-daemon.log` - log
+- `diktat-daemon.log` - log; records lengths and timings, never the text
+
+In `$XDG_RUNTIME_DIR/diktat/`, which is per-user and mode 0700, are the two
+that hold what was actually said:
+
+- `last` - last transcribed text
+- `last.wav` - audio of the last capture, pre-normalization
+
+An unset `XDG_RUNTIME_DIR` is an error rather than a fallback to `/tmp`: the
+only fallback available is the place those two files exist to stay out of, and
+a Wayland session always sets it, since the compositor's socket lives there.
 
 ## Build
 

@@ -97,7 +97,7 @@ and reversible.
   `StreamFinalize` alongside `Transcribe`. The Go bindings already expose all
   of it.
 - The recorder hands chunks to the model as well as to the buffer. The buffer
-  stays: `/tmp/diktat-last.wav` and the 60s cap both depend on it.
+  stays: `$XDG_RUNTIME_DIR/diktat/last.wav` and the 60s cap both depend on it.
 - The status file carries partial text as well as state. It is Pango markup,
   so the text needs escaping, which it does not need today.
 - Model switching gets a rule it does not have: a stream is per-session state,

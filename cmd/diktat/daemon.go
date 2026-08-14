@@ -404,7 +404,9 @@ func (d *daemon) stopRecording() {
 
 	setStatus(statusTx)
 	// Before Normalize, which rewrites samples in place.
-	if err := wav.WriteWAV(ipc.LastAudioFile, samples, audio.SampleRate); err != nil {
+	if path, err := ipc.LastAudio(); err != nil {
+		log.Printf("last-audio: %v", err)
+	} else if err := wav.WriteWAV(path, samples, audio.SampleRate); err != nil {
 		log.Printf("last-audio write: %v", err)
 	}
 	peak, rms := audio.Levels(samples)
@@ -433,8 +435,9 @@ func (d *daemon) stopRecording() {
 		return
 	}
 	// The text itself is deliberately not logged: the log is a long-lived file
-	// in /tmp and everything dictated would accumulate in it. Length is enough
-	// to tell "heard nothing" from "heard something" when reading the log.
+	// in /tmp and everything dictated would accumulate in it, which is also
+	// why it can stay there. Length is enough to tell "heard nothing" from
+	// "heard something" when reading the log.
 	// The breakdown separates the model's own work from everything around
 	// it, which is what tells a slow model from a cold one: a first
 	// utterance that spends its time in encode is still compiling shaders.
@@ -445,7 +448,9 @@ func (d *daemon) stopRecording() {
 
 	if text != "" {
 		out := text + " "
-		if err := os.WriteFile(ipc.LastTextFile, []byte(out), 0644); err != nil {
+		if path, err := ipc.LastText(); err != nil {
+			log.Printf("last-text: %v", err)
+		} else if err := os.WriteFile(path, []byte(out), 0600); err != nil {
 			log.Printf("last-text write: %v", err)
 		}
 		d.appendHistory(text)

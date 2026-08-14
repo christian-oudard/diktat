@@ -11,7 +11,11 @@ import (
 )
 
 func runRepeat(args []string) {
-	raw, err := os.ReadFile(ipc.LastTextFile)
+	path, err := ipc.LastText()
+	if err != nil {
+		log.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return

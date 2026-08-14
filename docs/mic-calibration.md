@@ -65,7 +65,7 @@ what it wrote:
 
 ```
 $ diktat toggle    # read the sentences below, then toggle again
-$ cp /tmp/diktat-last.wav recording.wav
+$ cp "$XDG_RUNTIME_DIR/diktat/last.wav" recording.wav
 ```
 
 That file is the audio exactly as the model received it, and the daemon's log
@@ -120,8 +120,9 @@ $ for m in $(diktat model --names); do
   done
 ```
 
-The daemon saves every capture to `/tmp/diktat-last.wav` before normalization,
-so a bad transcription can be fed straight in without re-recording it.
+The daemon saves every capture to `$XDG_RUNTIME_DIR/diktat/last.wav` before
+normalization, so a bad transcription can be fed straight in without
+re-recording it.
 
 Models are cached under `~/.cache/diktat/models` and never enter the nix build,
 so the runtime closure stays small. To switch the running daemon instead of
