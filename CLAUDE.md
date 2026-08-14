@@ -36,16 +36,20 @@ bindings; there is no second engine.
   `cmd/diktat`, so this is never installed: it is `go run ./cmd/transcribe`
   in the devShell. Go rather than a script because it has to run the real
   pipeline, which a script would have to reimplement.
-- `internal/models` - the menu. Six entries, none bundled: everything is
+- `internal/models` - the menu. Thirteen entries, none bundled: everything is
   downloaded into `~/.cache/diktat/models` from the `handy-computer` GGUF
   repos, so no model is a special case. Downloads are never implicit. The
   menu carries a language set and a vocab flag per model, both hand-kept
   because the menu has to answer before a model is downloaded, and both
-  checked against the library by a test for whatever is present. The
-  menu leads with parakeet rather than whisper: whisper encodes a padded 30
-  second window whatever was said, so on a 2 second utterance it costs the
-  same as on a 30 second one, while parakeet encodes only what it was
-  given. One whisper stays for the languages the others lack.
+  checked against the library by a test for whatever is present. Entries are
+  ordered by download size, which is also roughly the cost order, and the
+  number in that listing is how models get selected. Whisper encodes a padded
+  30 second window whatever was said, so on a 2 second utterance it costs the
+  same as on a 30 second one, while every other family here encodes only what
+  it was given; the whispers earn their place on languages and on vocabulary
+  hints, which no other family in the library takes. Several entries are
+  recent enough to have no published accuracy figure and are there to be
+  tried, not because they are known good.
 - `internal/asr` - one `Model` over transcribe.cpp. There is no backend
   interface any more: every model is a GGUF and the library reads the
   architecture out of it, so moonshine and whisper are not distinguishable

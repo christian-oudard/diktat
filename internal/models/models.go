@@ -23,8 +23,8 @@ type Spec struct {
 	// of fetching one. Measured from the published file, not converted from a
 	// decimal figure: the two differ by 5% and the column says MiB.
 	MiB int
-	// Vocab says the family takes vocabulary hints, which are whisper's
-	// initial prompt. Architectural rather than per-file, so it is recorded
+	// Vocab says the family can be conditioned on a vocabulary list, by a
+	// prompt or by an instruction. Architectural rather than per-file, so it is recorded
 	// here instead of loading every model to ask: the menu has to answer
 	// before anything is downloaded. TestVocabMatchesLibrary checks it
 	// against the library for whatever is present.
@@ -64,12 +64,30 @@ const Default = "whisper-tiny.en"
 // LibriSpeech alone.
 //
 //	whisper-tiny.en                       English, the default
+//	whisper-base.en                       English, a rung above the default
 //	parakeet-tdt_ctc-110m      6.6% WER   English
+//	canary-180m-flash                     4 languages at a tenth of the 1b
+//	whisper-small.en                      English, hints without the size
 //	parakeet-tdt-0.6b-v2       5.4% WER   English
+//	parakeet-tdt-0.6b-v3                  the v2 with 25 European languages
 //	whisper-large-v3-turbo     7.0% WER   99 languages
+//	Qwen3-ASR-0.6B                        30 languages, the widest small one
 //	canary-1b-flash            5.8% WER   en/de/es/fr, and translation
+//	Qwen3-ASR-1.7B                        the 0.6B's next size up
+//	cohere-transcribe-03-2026             14 languages
 //	granite-speech-4.1-2b-nar  4.9% WER   English, no timestamps
-//	Voxtral-Mini-3B-2507       6.0% WER   8 languages, and translation
+//	canary-qwen-2.5b                      English, an LLM for a decoder
+//
+// The blanks are models the leaderboard does not carry: the small whispers
+// because it only measures large-v3-turbo, and the recent ones because it has
+// not caught up with them. A number invented here would be worse than the
+// blank. Those are in the menu to be tried, not because they are known good.
+//
+// canary-qwen-2.5b is the one architecture here that decodes with a language
+// model rather than an ASR head, which is the only mechanism that could get a
+// technical term right from context instead of from acoustics. It takes no
+// instruction, so unlike Voxtral it cannot be talked into answering with
+// something other than a transcript.
 //
 // whisper-tiny.en is not on that leaderboard and would place last of these
 // if it were; it stays the default only until the newer models have been
@@ -92,27 +110,57 @@ const Default = "whisper-tiny.en"
 // only place the crossover is reachable. One whisper stays for the languages
 // the others lack.
 //
-// Whisper and voxtral take vocabulary hints, by different mechanisms, and
-// nothing else here does. Whisper conditions its decoder on the words, which
-// is mechanical; voxtral is an audio-LLM and gets them as an instruction it
-// may follow loosely. That whisper can be biased at all is most of its
-// remaining argument in this menu.
+// Only whisper takes vocabulary hints, which is most of its remaining
+// argument here: it is the one family the library can condition at all. So
+// the hinted models are a ladder of their own, and it used to run from
+// tiny.en straight to large-v3-turbo: fourteen times the size and
+// ninety-eight unused languages, to get better English. base.en and small.en
+// are the rungs between.
+//
+// Voxtral could take them too, as an instruction rather than a prompt, and
+// was in this menu for it. It left because whisper-large-v3-turbo does the
+// same job better on every axis that matters: a fifth the size, ninety-nine
+// languages against eight, and a decoder that is biased rather than an
+// audio-LLM that is asked. Voxtral won on a point of WER and lost on
+// everything else. asr.promptOptions still knows how to instruct one, so a
+// path to a voxtral GGUF outside this menu keeps working.
 //
 // moonshine-tiny is the floor: worth it only where nothing else fits.
-// granite is the ceiling on accuracy, and voxtral the ceiling on size. Both
-// are big enough that the cache budget will evict something to hold them, and
-// voxtral is here for its languages and its hints rather than its numbers:
-// parakeet-tdt-0.6b-v2 beats it on accuracy at a fifth of the size.
+// granite is the ceiling on accuracy, and cohere-transcribe on size; both are
+// big enough that the cache budget will evict something to hold them.
+//
+// parakeet-tdt-0.6b-v3 is here beside v2 rather than instead of it. On paper
+// it dominates: nine more mebibytes for twenty-four more languages, same
+// family and same shape. Whether it gives up English accuracy for them is not
+// something the leaderboard answers yet, so both stay until one has been
+// dictated through.
 var Catalog = []Spec{
 	{"moonshine-tiny", "Q8_0", 33, false, []string{"en"}},
 	{"whisper-tiny.en", "Q5_K_M", 42, true, []string{"en"}},
+	{"whisper-base.en", "Q5_K_M", 60, true, []string{"en"}},
 	{"parakeet-tdt_ctc-110m", "Q5_K_M", 96, false, []string{"en"}},
+	{"canary-180m-flash", "Q5_K_M", 151, false, []string{"en", "de", "es", "fr"}},
+	{"whisper-small.en", "Q5_K_M", 184, true, []string{"en"}},
 	{"parakeet-tdt-0.6b-v2", "Q5_K_M", 514, false, []string{"en"}},
+	{"parakeet-tdt-0.6b-v3", "Q5_K_M", 523, false, []string{
+		"en", "bg", "cs", "da", "de", "el", "es", "et", "fi", "fr", "hr", "hu",
+		"it", "lt", "lv", "mt", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "uk"}},
 	{"whisper-large-v3-turbo", "Q5_K_M", 590, true, nil},
+	{"Qwen3-ASR-0.6B", "Q5_K_M", 615, false, qwen3Langs},
 	{"canary-1b-flash", "Q5_K_M", 733, false, []string{"en", "de", "es", "fr"}},
+	{"Qwen3-ASR-1.7B", "Q5_K_M", 1447, false, qwen3Langs},
+	{"cohere-transcribe-03-2026", "Q5_K_M", 1688, false, []string{
+		"en", "ar", "de", "el", "es", "fr", "it", "ja", "ko", "nl", "pl", "pt", "vi", "zh"}},
 	{"granite-speech-4.1-2b-nar", "Q5_K_M", 1699, false, []string{"en", "de", "es", "fr", "pt"}},
-	{"Voxtral-Mini-3B-2507", "Q4_K_M", 2846, true, []string{"en", "fr", "de", "es", "it", "pt", "nl", "hi"}},
+	{"canary-qwen-2.5b", "Q5_K_M", 1891, false, []string{"en"}},
 }
+
+// qwen3Langs is the set both Qwen3-ASR sizes advertise, which is the same set.
+// Nothing writes to a Spec's Langs, so the two entries can share it.
+var qwen3Langs = []string{
+	"en", "ar", "cs", "da", "de", "el", "es", "fa", "fi", "fil", "fr", "hi",
+	"hu", "id", "it", "ja", "ko", "mk", "ms", "nl", "pl", "pt", "ro", "ru",
+	"sv", "th", "tr", "vi", "yue", "zh"}
 
 // Dir is where downloaded models live.
 func Dir() string {

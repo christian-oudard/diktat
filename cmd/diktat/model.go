@@ -67,7 +67,9 @@ func listModels() string {
 		current = models.Resolve(config.StartModel())
 	}
 
-	fmt.Printf("  %s %-28s %8s  %s  %s  %s\n",
+	// The number is right-aligned because the menu is past ten entries, and a
+	// ragged one shifts every column after it on the rows that need it most.
+	fmt.Printf("  %2s %-28s %8s  %s  %s  %s\n",
 		"#", "Name", "Size", "Vocab", "Downloaded", "Languages")
 	inUse := ""
 	for i, s := range models.Catalog {
@@ -75,13 +77,21 @@ func listModels() string {
 		if s.Path() == current {
 			mark, inUse = "*", s.Name
 		}
-		fmt.Printf("%s %d %-28s %8s  %s  %s  %s\n", mark, i+1, s.Name, s.Size(),
+		fmt.Printf("%s %2d %-28s %8s  %s  %s  %s\n", mark, i+1, s.Name, s.Size(),
 			tick(s.Vocab, "Vocab"), tick(s.Downloaded(), "Downloaded"), s.Languages())
 	}
 	// A model outside the menu gets no marker, so there would otherwise be
-	// nothing anywhere saying what is in use.
+	// nothing anywhere saying what is in use. Say when it is not there: a
+	// remembered choice outlives the menu entry it was made from, so dropping
+	// a model leaves whoever had chosen it pointed at a path that no longer
+	// resolves, and the daemon's failure to load it is a poor place to find
+	// that out.
 	if inUse == "" {
-		fmt.Printf("\nusing %s\n", current)
+		missing := ""
+		if models.Check(current) != nil {
+			missing = "  (not there; pick another)"
+		}
+		fmt.Printf("\nusing %s%s\n", current, missing)
 	}
 	return inUse
 }
