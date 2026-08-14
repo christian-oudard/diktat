@@ -242,7 +242,7 @@ func (d *daemon) switchTo(dir string) {
 			// Reading a couple of gigabytes off disk and warming it are
 			// separate costs with separate causes, and a switch that is
 			// taking too long is a question about which one. Warmed says
-			// what the ladder cost; this says what came before it.
+			// what the buckets cost; this says what came before it.
 			log.Printf("Loaded %s in %s, warming", model.Name(),
 				time.Since(t0).Round(time.Millisecond))
 			// Warm first, then hand over the hints: an instructed audio-LLM
@@ -375,14 +375,14 @@ func cacheBudget(cfg *config.Config) uint64 {
 	return 4 << 30
 }
 
-// warm rehearses the ladder of lengths in internal/audio, because loading a
+// warm rehearses the length buckets in internal/audio, because loading a
 // model is not the same as being ready to use it: the Vulkan backend defers
 // compiling its shaders, and ggml defers allocating its compute buffers, to
 // the first graph run of each shape, and the shape follows the length of the
 // audio. The daemon is resident and loads eagerly, so pay that here rather
 // than on the first thing the user says.
 //
-// The cost is one throwaway transcription per rung, a few hundred
+// The cost is one throwaway transcription per bucket, a few hundred
 // milliseconds in total once the driver has the shaders on disk, and it runs
 // off the main loop either way.
 //
@@ -403,15 +403,15 @@ func warm(m *asr.Model) {
 		return
 	}
 	t0 := time.Now()
-	rungs := audio.Warm(m.MaxAudio())
-	// Per rung rather than a total, since the total cannot say which rung was
-	// worth running. A rung that compiles nothing on every model is one to
-	// drop, and a rung that compiles on a machine where the ladder was never
-	// measured is the ladder being too sparse for that GPU.
-	work := make([]string, 0, len(rungs))
+	buckets := audio.Warm(m.MaxAudio())
+	// Per bucket rather than a total, since the total cannot say which bucket
+	// was worth running. A bucket that compiles nothing on every model is one
+	// to drop, and a bucket that compiles on a machine where they were never
+	// measured is the set being too sparse for that GPU.
+	work := make([]string, 0, len(buckets))
 	before := m.CompiledKernels()
-	for _, secs := range rungs {
-		rung := time.Now()
+	for _, secs := range buckets {
+		started := time.Now()
 		// A truncated warmup is a success: the graph ran, which is the entire
 		// point, and the transcript is thrown away either way. An audio-LLM
 		// can talk its way to the decode budget on a rehearsal, and giving up
@@ -424,14 +424,14 @@ func warm(m *asr.Model) {
 		compiled := m.CompiledKernels() - before
 		before += compiled
 		work = append(work, fmt.Sprintf("%ds:%s/%dk", secs,
-			time.Since(rung).Round(time.Millisecond), compiled))
+			time.Since(started).Round(time.Millisecond), compiled))
 	}
 	// Loading allocated the weights; those runs allocated the buffers, which
-	// are the larger half and grow with the longest rung. Now is when the
+	// are the larger half and grow with the largest bucket. Now is when the
 	// model's real cost is knowable.
 	m.Measure()
 	t := m.Timings()
-	log.Printf("Warmed in %s: %s, %s resident (last rung: mel %s, encode %s, decode %s, other %s)",
+	log.Printf("Warmed in %s: %s, %s resident (last bucket: mel %s, encode %s, decode %s, other %s)",
 		time.Since(t0).Round(time.Millisecond), strings.Join(work, " "), human.Bytes(m.Bytes()),
 		t.Mel.Round(time.Millisecond), t.Encode.Round(time.Millisecond),
 		t.Decode.Round(time.Millisecond), t.Other.Round(time.Millisecond))
@@ -467,7 +467,7 @@ var warmSpeech = sync.OnceValues(func() ([]float32, error) {
 })
 
 // fit cuts or loops speech to exactly secs of audio. Looping is honest here:
-// the rung is about the shape of the graph, and a repeated sentence produces
+// the bucket is about the shape of the graph, and a repeated sentence produces
 // tokens at the same rate as a longer one would.
 func fit(speech []float32, secs int) []float32 {
 	out := make([]float32, secs*audio.SampleRate)
@@ -522,7 +522,7 @@ func (d *daemon) startRecording() {
 // one encoded in 993ms where the same utterance back to back encoded in 27ms.
 // A single short run absorbs it, and it has seconds of speech to hide behind.
 //
-// The run is a length the ladder already rehearsed, so it compiles nothing,
+// The run is a length the warmup already rehearsed, so it compiles nothing,
 // and it is thrown away. Errors are ignored: this is an optimisation, and the
 // transcription that follows will report anything real.
 func (d *daemon) wake() {
@@ -612,8 +612,8 @@ func (d *daemon) stopRecording() {
 	text := strings.Join(parts, " ")
 	// Anything compiled here is a shape the warmup did not cover, and it is
 	// the reason this transcription was slower than the next one at the same
-	// length will be. Expected past the last warm rung, a bug below it, and
-	// named either way, since the name says which variant the ladder missed.
+	// length will be. Expected past the last warm bucket, a bug below it, and
+	// named either way, since the name says which variant the buckets missed.
 	if compiled := d.model.CompiledKernelNames()[len(kernels):]; len(compiled) > 0 {
 		log.Printf("Compiled %d kernels mid-transcription, on %.1fs of audio: %s",
 			len(compiled), float64(len(samples))/float64(audio.SampleRate),

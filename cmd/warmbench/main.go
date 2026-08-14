@@ -119,7 +119,7 @@ func main() {
 // The last column is what this length asked the backend to build that no
 // earlier one had. Names rather than a count, because they say what was new:
 // mul_mat variants carry their tile size and whether the dimensions took the
-// aligned path, which is the band structure a ladder has to cover.
+// aligned path, which is the band structure the buckets have to cover.
 func run(m *asr.Model, stage, kind string, secs float64, pass int, speech []float32, pad bool) {
 	clip := material(kind, secs, speech)
 	if pad {

@@ -100,23 +100,23 @@ compiles its shaders on the first graph run, and ggml allocates its compute
 buffers there too. Both are per graph shape, and the shape follows the length
 of the audio, so this is not a cost that is paid once.
 
-After a load the daemon transcribes throwaway speech at each rung in
+After a load the daemon transcribes throwaway speech at each length bucket in
 `internal/audio`, 1, 2, 3, 5, 7, 10, 15, 20, 25 and 30 seconds. The backend
 picks its matmul variants in bands rather than per sample, so rehearsing inside
-a band warms the whole band, and the ladder only has to be dense enough to
-enter every band once. Measured from a cold shader cache, it leaves arbitrary
+a band warms the whole band, and the buckets only have to be dense enough to
+enter every band once. Measured from a cold shader cache, they leave arbitrary
 lengths from 0.3s to 29.6s compiling nothing.
 
-Which lengths earn a rung is readable rather than guessed. transcribe.cpp
+Which lengths earn a bucket is readable rather than guessed. transcribe.cpp
 reports the names of the kernels a device has compiled, not just how many, and
 `cmd/warmbench` prints what each length built that no shorter one had. The
 names carry the variant, so the bands come out directly: on moonshine, 2s
 brings in the q8_0 medium tile, 5s the f16 large tile, 15s the q8_0 large tile
-and 20s its aligned form, and nothing else in the ladder builds anything. On
-canary the productive lengths are 1, 2, 3, 7 and 25 instead, which is why the
-ladder is the union rather than any one model's set.
+and 20s its aligned form, and no other bucket builds anything. On canary the
+productive lengths are 1, 2, 3, 7 and 25 instead, which is why the set is the
+union rather than any one model's.
 
-A sparse ladder does not work and the holes are not where the architecture
+Sparse buckets do not work and the holes are not where the architecture
 suggests. Rehearsing at 1 and 30 seconds left moonshine compiling a shader at
 20 seconds and granite at 2, 5 and 10, three to four seconds each. The GGUF
 says which families pad to a fixed window, but ggml-vulkan picks its variants
@@ -126,13 +126,13 @@ distinct is a property of the pair, not of the model.
 Two things were tried and reverted, both of them ways to make the coverage
 exact rather than dense:
 
-- Rounding every utterance up to a rung. The encoder work it adds is charged
+- Rounding every utterance up to a bucket. The encoder work it adds is charged
   forever, where the compiles it avoids are paid once: a 3.2s utterance rounded
   up to 5s cost granite 264ms against 80ms, and parakeet 46ms against 23ms.
-  Only very short audio is still lifted, to the shortest rung, because below
+  Only very short audio is still lifted, to the smallest bucket, because below
   that the shape is genuinely unrehearsed: canary spent 2.4s on 0.4s of audio
   and now spends 12ms.
-- Cutting long audio into rung-sized pieces. The models window long audio
+- Cutting long audio into bucket-sized pieces. The models window long audio
   themselves and do it better: cutting a 60 second clip at 30 gave "was
   henceforth to be the victim." followed by "of a strange mystery." on every
   family, including ones that declare no limit at all. `audio.Chunk` now cuts
@@ -146,15 +146,16 @@ second run, started when recording starts, which absorbs all of it and hides
 behind the speech. A model is single-threaded, so anything that touches one
 waits for that run first.
 
-Past the last rung nothing is rehearsed. A dictation that long pays one compile
-the first time it meets a shape, and the driver's on-disk cache keeps it.
+Past the last bucket nothing is rehearsed. A dictation that long pays one
+compile the first time it meets a shape, and the driver's on-disk cache keeps
+it.
 
 This is the same problem serving stacks meet with dynamic shapes, and the same
 trade: vLLM captures CUDA graphs at a fixed set of batch sizes and pads to the
 next one, and cuDNN's autotuner re-benchmarks per input shape, which is why
 variable-length workloads are told to bucket. Their padding is cheap because a
 padded batch slot is idle work; ours is not, because a longer clip is more
-encoder work, which is why the ladder is dense but the padding is not.
+encoder work, which is why our buckets are dense but the padding is not.
 
 The NVIDIA driver keeps compiled shaders in `~/.cache/nvidia/GLCache`, so a
 warm run costs a few hundred milliseconds in the normal case, and only the

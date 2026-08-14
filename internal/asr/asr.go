@@ -243,8 +243,8 @@ func (m *Model) CompiledKernels() uint64 {
 // The count says a shape was new; these say what was new about it. A backend
 // picks among variants of one operation by the dimensions it is given, so the
 // names distinguish which matmul tile size a length selected and whether its
-// dimensions took the aligned path. That is the band structure a warm ladder
-// has to cover, read off the backend instead of inferred from a sweep.
+// dimensions took the aligned path. That is the band structure the warmup
+// buckets have to cover, read off the backend instead of inferred from a sweep.
 func (m *Model) CompiledKernelNames() []string {
 	return transcribe.CompiledKernelNames(m.device)
 }

@@ -39,17 +39,17 @@ func TestPadKeepsTheAudio(t *testing.T) {
 	}
 }
 
-// A model that will not take the whole ladder is rehearsed only at the lengths
+// A model that will not take every bucket is rehearsed only at the lengths
 // it accepts, since a warmup run it refuses rehearses nothing.
 func TestWarmRespectsTheModelsLimit(t *testing.T) {
 	warmed := Warm(12 * time.Second)
 	if len(warmed) == 0 {
-		t.Fatal("no rungs under a 12s limit")
+		t.Fatal("no buckets under a 12s limit")
 	}
 	if top := warmed[len(warmed)-1]; top != 10 {
-		t.Errorf("longest rung under a 12s limit is %ds, want 10s", top)
+		t.Errorf("largest bucket under a 12s limit is %ds, want 10s", top)
 	}
 	if len(Warm(0)) != len(Warm(time.Hour)) {
-		t.Error("a limit past the ladder dropped rungs")
+		t.Error("a limit past the last bucket dropped buckets")
 	}
 }

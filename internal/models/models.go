@@ -100,7 +100,7 @@ const Default = "whisper-tiny.en"
 // LibriSpeech alone.
 //
 //	whisper-tiny.en                       English, the default
-//	whisper-base.en                       English, a rung above the default
+//	whisper-base.en                       English, a step above the default
 //	parakeet-tdt_ctc-110m      6.6% WER   English
 //	canary-180m-flash                     4 languages at a tenth of the 1b
 //	whisper-small.en                      English, hints without the size
@@ -148,10 +148,10 @@ const Default = "whisper-tiny.en"
 //
 // Only whisper takes vocabulary hints, which is most of its remaining
 // argument here: it is the one family the library can condition at all. So
-// the hinted models are a ladder of their own, and it used to run from
-// tiny.en straight to large-v3-turbo: fourteen times the size and
+// the hinted models are a size progression of their own, and it used to run
+// from tiny.en straight to large-v3-turbo: fourteen times the size and
 // ninety-eight unused languages, to get better English. base.en and small.en
-// are the rungs between.
+// are the sizes between.
 //
 // Voxtral could take them too, as an instruction rather than a prompt, and
 // was in this menu for it. It left because whisper-large-v3-turbo does the
