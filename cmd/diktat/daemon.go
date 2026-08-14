@@ -233,6 +233,12 @@ func (d *daemon) switchTo(dir string) {
 		t0 := time.Now()
 		model, err := asr.Load(dir)
 		if err == nil {
+			// Reading a couple of gigabytes off disk and warming it are
+			// separate costs with separate causes, and a switch that is
+			// taking too long is a question about which one. Warmed says
+			// what the ladder cost; this says what came before it.
+			log.Printf("Loaded %s in %s, warming", model.Name(),
+				time.Since(t0).Round(time.Millisecond))
 			// Warm first, then hand over the hints: an instructed audio-LLM
 			// told to expect terms and then given warm audio has been seen
 			// to invent its way to the decode budget.
