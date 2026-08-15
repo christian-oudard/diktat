@@ -45,10 +45,13 @@ engine that is fastest at the current favourite.
   separate download verb: naming a model is the only reason to want one, and
   the prompt keeps the fetch from being silent.
 - `cmd/transcribe/` - runs the daemon's pipeline over WAV files, for
-  comparing models on fixed audio. The flake's `subPackages` builds only
-  `cmd/diktat`, so this is never installed: it is `go run ./cmd/transcribe`
-  in the devShell. Go rather than a script because it has to run the real
-  pipeline, which a script would have to reimplement.
+  comparing models on fixed audio. Warms first, like the daemon, since an
+  unwarmed model cuts long audio differently and that changes the transcript.
+  `-limit` overrides where it cuts, which is how the effect was measured.
+  The flake's `subPackages` builds only `cmd/diktat`, so this is never
+  installed: it is `go run ./cmd/transcribe` in the devShell. Go rather than a
+  script because it has to run the real pipeline, which a script would have to
+  reimplement.
 - `internal/models` - the menu. Thirteen entries, none bundled: everything is
   downloaded into `~/.cache/diktat/models` from the `handy-computer` GGUF
   repos, so no model is a special case. Downloads are never implicit. The
@@ -67,6 +70,10 @@ engine that is fastest at the current favourite.
   here. Picks the discrete GPU when there is one.
 - `internal/wav` - WAV read/write, split out from `internal/audio` so the
   offline tools can read a clip without pulling in malgo.
+- `internal/warmup` - the rehearsal: the synthesised speech, the loop over the
+  buckets, and what each one cost. Shared by the daemon and the offline tool
+  because warming is not only about latency; it is also what tells a model how
+  much audio it can take in one graph.
 - `internal/` - shared packages: asr, audio, config, human, output. `human`
   renders sizes in binary units at one precision rule, since the menu, the
   download progress and the daemon's memory lines all print the same kind of
@@ -203,8 +210,12 @@ that runs, so the limit climbs with use.
 
 A model that has run nothing has no rate, and gets 30 seconds: what the warmup
 rehearses to and what whisper windows to, so every model takes it, and running
-it supplies the measurement. The daemon warms before it serves and never meets
-this; `cmd/transcribe` does not warm and does.
+it supplies the measurement. Anything that warms first never meets this floor,
+which is why `internal/warmup` is shared rather than living in the daemon: a
+tool that skips warming cuts audio the daemon would not, and where the cut
+falls changes what comes back. On `bench.wav` a 30 second cut cost
+canary-180m-flash 19 points of word error rate and saved parakeet 4, so a
+benchmark run without warming is not measuring the daemon's pipeline.
 
 ## Model cache
 

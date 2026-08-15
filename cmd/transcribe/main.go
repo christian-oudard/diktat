@@ -23,12 +23,14 @@ import (
 	"github.com/christian-oudard/diktat/internal/asr"
 	"github.com/christian-oudard/diktat/internal/audio"
 	"github.com/christian-oudard/diktat/internal/models"
+	"github.com/christian-oudard/diktat/internal/warmup"
 	"github.com/christian-oudard/diktat/internal/wav"
 )
 
 func main() {
 	fs := flag.NewFlagSet("transcribe", flag.ExitOnError)
 	raw := fs.Bool("raw", false, "skip normalization")
+	limitFlag := fs.Duration("limit", 0, "cut audio at this length instead of what the model can take")
 	name := fs.String("model", models.Default, "model to transcribe with")
 	fs.Parse(os.Args[1:])
 
@@ -41,6 +43,14 @@ func main() {
 		log.Fatalf("load model: %v", err)
 	}
 	defer model.Close()
+	// Warmed like the daemon warms, which is not only about the first file's
+	// timings. A model that has run nothing does not know how much audio it
+	// can take in one graph and falls back to a 30 second floor, and cutting
+	// a clip there changes what comes back: on this passage it cost
+	// canary-180m-flash 19 points of word error rate and saved parakeet 4.
+	if _, err := warmup.Run(model); err != nil {
+		log.Printf("warmup: %v", err)
+	}
 	fmt.Println(model.Arch())
 
 	for _, path := range fs.Args() {
@@ -58,6 +68,9 @@ func main() {
 		// Cut and padded like the daemon does it, so a file measures what an
 		// utterance of that length would cost, down to the graph shape.
 		limit := model.AudioLimit()
+		if *limitFlag != 0 {
+			limit = *limitFlag
+		}
 		var parts []string
 		fail := false
 		for _, chunk := range audio.Chunk(stored, int(limit.Seconds())*audio.SampleRate) {

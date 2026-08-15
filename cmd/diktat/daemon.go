@@ -4,11 +4,9 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"slices"
@@ -24,7 +22,7 @@ import (
 	"github.com/christian-oudard/diktat/internal/ipc"
 	"github.com/christian-oudard/diktat/internal/models"
 	"github.com/christian-oudard/diktat/internal/output"
-	"github.com/christian-oudard/diktat/internal/wav"
+	"github.com/christian-oudard/diktat/internal/warmup"
 )
 
 const (
@@ -361,56 +359,19 @@ func cacheBudget(cfg *config.Config) uint64 {
 	return 4 << 30
 }
 
-// warm rehearses the length buckets in internal/audio, because loading a
-// model is not the same as being ready to use it: the Vulkan backend defers
-// compiling its shaders, and ggml defers allocating its compute buffers, to
-// the first graph run of each shape, and the shape follows the length of the
-// audio. The daemon is resident and loads eagerly, so pay that here rather
-// than on the first thing the user says.
-//
-// The cost is one throwaway transcription per bucket, a few hundred
-// milliseconds in total once the driver has the shaders on disk, and it runs
-// off the main loop either way.
-//
-// It rehearses on speech rather than on a signal because half the cost is in
-// the decoder, whose shapes follow the number of tokens that come out. Noise
-// emits none, so under it a 20s utterance on granite still paid 5.3s of
-// decode; on speech, 57ms.
-//
-// There is nothing to warm on the CPU: with no shaders to compile, seven warm
-// strategies measured identically to no warmup at all.
+// warm rehearses the model and says what it cost. The daemon is resident and
+// loads eagerly, so the shader compiles and buffer allocations are paid here
+// rather than on the first thing the user says. The cost is one throwaway
+// transcription per bucket, a few hundred milliseconds in total once the
+// driver has the shaders on disk, and it runs off the main loop either way.
 func warm(m *asr.Model) {
-	if !m.OnGPU() {
-		return
-	}
-	speech, err := warmSpeech()
+	t0 := time.Now()
+	work, err := warmup.Run(m)
 	if err != nil {
 		log.Printf("warmup: %v", err)
-		return
 	}
-	t0 := time.Now()
-	buckets := audio.Warm(m.MaxAudio())
-	// Per bucket rather than a total, since the total cannot say which bucket
-	// was worth running. A bucket that compiles nothing on every model is one
-	// to drop, and a bucket that compiles on a machine where they were never
-	// measured is the set being too sparse for that GPU.
-	work := make([]string, 0, len(buckets))
-	before := m.CompiledKernels()
-	for _, secs := range buckets {
-		started := time.Now()
-		// A truncated warmup is a success: the graph ran, which is the entire
-		// point, and the transcript is thrown away either way. An audio-LLM
-		// can talk its way to the decode budget on a rehearsal, and giving up
-		// there would leave the cache budgeting the largest models by their
-		// file size.
-		if _, err := m.Transcribe(fit(speech, secs)); err != nil && !errors.Is(err, asr.ErrTruncated) {
-			log.Printf("warmup %ds: %v", secs, err)
-			return
-		}
-		compiled := m.CompiledKernels() - before
-		before += compiled
-		work = append(work, fmt.Sprintf("%ds:%s/%dk", secs,
-			time.Since(started).Round(time.Millisecond), compiled))
+	if work == "" {
+		return
 	}
 	// Loading allocated the weights; those runs allocated the buffers, which
 	// are the larger half and grow with the largest bucket. Now is when the
@@ -418,50 +379,10 @@ func warm(m *asr.Model) {
 	// clip it could still take.
 	t := m.Timings()
 	log.Printf("Warmed in %s: %s, %s resident, good for %s of audio (last bucket: mel %s, encode %s, decode %s, other %s)",
-		time.Since(t0).Round(time.Millisecond), strings.Join(work, " "), human.Bytes(m.Bytes()),
+		time.Since(t0).Round(time.Millisecond), work, human.Bytes(m.Bytes()),
 		m.AudioLimit().Round(time.Second),
 		t.Mel.Round(time.Millisecond), t.Encode.Round(time.Millisecond),
 		t.Decode.Round(time.Millisecond), t.Other.Round(time.Millisecond))
-}
-
-// warmSentences are the Harvard sentences from docs/mic-calibration.md, which
-// are phonetically balanced and already in the repo for the microphone check.
-const warmSentences = "The birch canoe slid on the smooth planks. " +
-	"Glue the sheet to the dark blue background. " +
-	"These days a chicken leg is a rare dish. " +
-	"The juice of lemons makes fine punch. " +
-	"A pod of whales sped past the quiet cove."
-
-// warmSpeech renders those sentences once and keeps them, since every load
-// this session warms on the same audio and the buffer is under 2 MB.
-//
-// Synthesised rather than shipped: a wav in the repo is data, and the daemon
-// only needs audio that provokes a realistic number of tokens. Measured,
-// espeak-ng and a neural synthesiser warmed identically, 725ms against 722ms
-// on the probe that matters, so the cheap one wins.
-var warmSpeech = sync.OnceValues(func() ([]float32, error) {
-	// espeak-ng renders at its voice's rate whatever we ask for, so the rate
-	// comes back from the header rather than being assumed.
-	wave, err := exec.Command("espeak-ng", "-v", "en-us", "-s", "150", "--stdout", warmSentences).Output()
-	if err != nil {
-		return nil, fmt.Errorf("espeak-ng: %w", err)
-	}
-	samples, rate, err := wav.Decode(wave)
-	if err != nil {
-		return nil, err
-	}
-	return audio.Resample(samples, rate, audio.SampleRate), nil
-})
-
-// fit cuts or loops speech to exactly secs of audio. Looping is honest here:
-// the bucket is about the shape of the graph, and a repeated sentence produces
-// tokens at the same rate as a longer one would.
-func fit(speech []float32, secs int) []float32 {
-	out := make([]float32, secs*audio.SampleRate)
-	for i := range out {
-		out[i] = speech[i%len(speech)]
-	}
-	return out
 }
 
 func (d *daemon) closeModels() {
@@ -516,7 +437,7 @@ func (d *daemon) wake() {
 	if !d.model.OnGPU() || d.waking != nil {
 		return
 	}
-	speech, err := warmSpeech()
+	speech, err := warmup.Speech()
 	if err != nil {
 		return
 	}
@@ -524,7 +445,7 @@ func (d *daemon) wake() {
 	d.waking, d.woke = done, d.model
 	go func() {
 		defer close(done)
-		d.woke.Transcribe(fit(speech, 1))
+		d.woke.Transcribe(warmup.Fit(speech, 1))
 	}()
 }
 
