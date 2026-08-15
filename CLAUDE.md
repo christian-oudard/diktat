@@ -10,6 +10,15 @@ Models are downloaded on demand into the user's cache, not at build time.
 Speech recognition is transcribe.cpp throughout, linked in through its Go
 bindings; there is no second engine.
 
+It is kept for breadth rather than for any one model. The alternatives were
+weighed once the measurements landed: sherpa-onnx runs the parakeets well but
+reaches a GPU only through CUDA, which means an unfree closure, and drops
+every audio-LLM in the menu; parakeet.cpp is ggml and Vulkan like this one and
+brings streaming with end-of-utterance detection, but does parakeet and
+nothing else. Parakeet wins today and the field turns over every few months,
+so the engine that takes a new family as another GGUF is worth more than the
+engine that is fastest at the current favourite.
+
 ## Layout
 
 - `cmd/diktat/` - the shipped binary, one file per subcommand (daemon,
