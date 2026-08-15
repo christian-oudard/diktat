@@ -145,7 +145,8 @@ exact rather than dense:
   themselves and do it better: cutting a 60 second clip at 30 gave "was
   henceforth to be the victim." followed by "of a strange mystery." on every
   family, including ones that declare no limit at all. `audio.Chunk` now cuts
-  only what a model would refuse outright.
+  only what a model would refuse or the card could not hold (see Audio length
+  below).
 
 Warming a model is not the whole of being warm. A card left alone drops its
 clocks, so the first utterance after a pause pays to bring them back: on
@@ -172,6 +173,39 @@ first one after a driver update pays the compile. `cmd/warmbench` measures all
 of this: it rehearses one strategy per process and reports what each probe
 compiled.
 
+## Audio length
+
+Every family here except whisper encodes the whole clip in one graph, and the
+activations grow with its length, so there is a length at which the card cannot
+hold the graph. The Vulkan backend does not survive that: the allocation fails
+and the process dies with it, which for a daemon means dictation stops
+mid-sentence and the bar goes dark. Whisper is exempt because it windows to 30
+seconds internally, so its cost is flat at any length.
+
+`MaxAudio`, which is the model's own declared ceiling, does not predict this
+and cannot. Measured on the 8 GB laptop card, granite advertises 6m24s and dies
+at 3 minutes; canary-180m-flash advertises no limit at all and dies at about 5;
+Qwen3-ASR-1.7B dies at a little over a minute. A 151 MiB canary holds 4.3 GiB
+after one four minute clip.
+
+So the limit is measured rather than declared. ggml keeps its compute buffers
+at the high-water mark, so a clip no longer than one already run allocates
+nothing and is always safe; `Model.Transcribe` reads the device across the
+clips that are longer, which are the only ones that allocate, and the drop is
+attributable to that model rather than to everything loaded since.
+`Model.AudioLimit` is then the longest clip already run plus what a quarter of
+the device's free memory buys at that measured rate, capped by `MaxAudio` if
+the model declares one. A quarter because this extrapolates past every length
+measured and the slope taken from short clips understates the true one by up to
+half again across the four families checked; being wrong the safe way costs a
+seam, and the other way costs the daemon. The estimate re-anchors on every clip
+that runs, so the limit climbs with use.
+
+A model that has run nothing has no rate, and gets 30 seconds: what the warmup
+rehearses to and what whisper windows to, so every model takes it, and running
+it supplies the measurement. The daemon warms before it serves and never meets
+this; `cmd/transcribe` does not warm and does.
+
 ## Model cache
 
 Every model loaded stays resident, so switching back is instant. That needs a
@@ -179,11 +213,19 @@ ceiling now the models are large: the laptop GPU has 8 GB shared with the
 desktop, and ggml's context and compute buffers cost more than the weights do
 for a small model, so nvidia-smi shows ~1.4 GB resident for a 44 MB file.
 
-`asr.Load` measures the cost by reading the device's free memory either side
-of the load, which captures those buffers; a backend reporting no memory
-falls back to the file size. `overBudget` in `daemon.go` picks what to drop,
-oldest first, and never the model in use, so too small a budget degrades to
-keeping exactly one model rather than to keeping none.
+`asr.Load` measures the weights and context by reading the device's free memory
+either side of the load; the compute buffers are added as transcriptions grow
+them, by the same accounting as above, so a model's cost is current rather than
+what it was at load. A backend reporting no memory falls back to the file size.
+`overBudget` in `daemon.go` picks what to drop, oldest first, and never the
+model in use, so too small a budget degrades to keeping exactly one model
+rather than to keeping none.
+
+The default budget is two thirds of what the device had **free** at startup,
+not of its total. The remaining third has to cover the compute buffers of
+whichever model is in use, and those grow with the length of the dictation;
+struck against the total it would also be spending the memory the compositor
+already holds, which on this laptop is 1.4 GB of the 8.
 
 ## IPC files
 
@@ -229,7 +271,7 @@ itself on PATH, `nix profile add .`.
   hand-authored; that choice outranks this key, and deleting it restores
   this one.
 - `model_cache_mb` - ceiling on what resident models hold together. 0 takes
-  two thirds of the compute device's memory.
+  two thirds of what the compute device had free at startup.
 - `paste_methods` - map of sway app_id to paste key combo (`C-v`, `C-S-v`)
 - `history_file` - JSONL append target for each transcription
 

@@ -57,7 +57,7 @@ func main() {
 		t0 := time.Now()
 		// Cut and padded like the daemon does it, so a file measures what an
 		// utterance of that length would cost, down to the graph shape.
-		limit := model.MaxAudio()
+		limit := model.AudioLimit()
 		var parts []string
 		fail := false
 		for _, chunk := range audio.Chunk(stored, int(limit.Seconds())*audio.SampleRate) {

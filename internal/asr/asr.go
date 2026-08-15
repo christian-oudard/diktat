@@ -32,14 +32,23 @@ type Model struct {
 	// queries take.
 	gpu    string
 	device int
-	// bytes is what this model costs on its device, which is what a cache
-	// has to budget against. freeAtLoad is the device's free memory just
-	// before it was loaded, kept so Measure can take the difference later.
-	bytes      uint64
-	freeAtLoad uint64
+	// resident is what the weights and the context cost on the device, and
+	// graph is what the compute buffers have grown to on top of them. longest
+	// is the longest clip run so far, which is the length graph was measured
+	// at: ggml keeps those buffers at their high-water mark, so the pair says
+	// both what this model costs a cache now and what another second of audio
+	// would add.
+	resident uint64
+	graph    uint64
+	longest  time.Duration
 	// timings is where the last transcription went.
 	timings Timings
 }
+
+// sampleRate is the rate every model here is fed at. Named rather than
+// imported: internal/audio pulls in the capture library, and this package is
+// linked into tools that never record.
+const sampleRate = 16000
 
 // Timings is where a transcription's time went. Encode dominates for whisper,
 // which runs it over a padded 30 second window however long the utterance.
@@ -70,21 +79,125 @@ func Load(path string) (*Model, error) {
 		return nil, fmt.Errorf("%s: %w", filepath.Base(path), err)
 	}
 	m := &Model{
-		s:          s,
-		name:       strings.TrimSuffix(filepath.Base(path), ".gguf"),
-		gpu:        gpu,
-		device:     deviceIndex(opts),
-		bytes:      uint64(info.Size()),
-		freeAtLoad: before,
+		s:        s,
+		name:     strings.TrimSuffix(filepath.Base(path), ".gguf"),
+		gpu:      gpu,
+		device:   deviceIndex(opts),
+		resident: uint64(info.Size()),
 	}
-	m.Measure()
+	// What the load itself took off the device, which is more than the file:
+	// the weights are joined by the context the session keeps. A backend that
+	// reports no memory leaves the file size standing, which is a floor rather
+	// than an estimate.
+	if after := deviceFree(opts); before > after {
+		m.resident = before - after
+	}
 	return m, nil
 }
 
-// Bytes is what this model costs on its device: measured against the device's
-// free memory where the backend reports it, and the file size otherwise,
-// which is a floor rather than an estimate.
-func (m *Model) Bytes() uint64 { return m.bytes }
+// Bytes is what this model costs on its device now: the weights and context it
+// loaded with, plus the compute buffers its transcriptions have grown to.
+//
+// The second half is not a detail. ggml allocates compute buffers on the first
+// graph run of a shape and keeps them at the high-water mark, and for every
+// family here except whisper that mark grows with the length of the audio. One
+// four minute dictation took canary-180m-flash, a 151 MiB model, to 4.3 GiB.
+func (m *Model) Bytes() uint64 { return m.resident + m.graph }
+
+// AudioLimit is the longest clip to hand this model in one run: the shorter of
+// what it says it accepts and what the device can still afford. 0 means
+// neither imposes one.
+//
+// The model's own figure is not enough on its own. Every family here except
+// whisper encodes the whole clip in one graph and whisper windows internally,
+// so for the rest the activations grow with the length until the card cannot
+// hold them, and the Vulkan backend does not survive that: the allocation
+// fails and the process dies with it. Measured here, granite died on three
+// minutes of audio against the six and a half it advertises, and
+// canary-180m-flash, which advertises no limit at all, was within a minute of
+// the same fate at five.
+func (m *Model) AudioLimit() time.Duration {
+	return shorter(m.MaxAudio(), m.fits())
+}
+
+// shorter is the tighter of two limits, where 0 on either side means that side
+// imposes none. Split out so the arithmetic can be tested without a model.
+func shorter(a, b time.Duration) time.Duration {
+	switch {
+	case a == 0:
+		return b
+	case b == 0:
+		return a
+	case a < b:
+		return a
+	}
+	return b
+}
+
+// fits is the longest clip whose graph the device can still afford, or 0 when
+// nothing has been measured to say.
+//
+// Anything up to the longest clip already run costs no new allocation, since
+// the buffers for it are held, so that length is always safe and is the floor.
+// Past it, a quarter of the device's free memory is what may be spent at the
+// rate a second of audio has been costing.
+//
+// A quarter rather than all of it because this extrapolates past every length
+// measured, and against four families the slope taken from short clips
+// understates the true one by up to half again. The floor makes the estimate
+// self-correcting: every clip that runs re-measures at its own length, so the
+// limit climbs with use. Being wrong the safe way costs a seam in a very long
+// dictation, and being wrong the other way costs the daemon.
+func (m *Model) fits() time.Duration {
+	free := m.free()
+	if free == 0 {
+		// The CPU, or a backend that reports no memory. Neither can be
+		// measured against, and neither is the one that dies.
+		return 0
+	}
+	if fit := fitsIn(free/4, m.graph, m.longest); fit > 0 {
+		return fit
+	}
+	return unmeasuredLimit
+}
+
+// unmeasuredLimit is the longest clip to hand a model that has run nothing
+// yet, and so has no rate to be bounded by. Half a minute is what the warmup
+// rehearses to and what whisper windows to internally, so every model here
+// takes it comfortably, and running it is what supplies the measurement the
+// clip after it is bounded by.
+//
+// The daemon warms before it serves and never meets this. It is here for a
+// caller that does not, where the cost of it is one extra seam in a long clip
+// and the cost of its absence is a dead process.
+const unmeasuredLimit = 30 * time.Second
+
+// fitsIn is how long a clip can get when spare bytes are left to spend and
+// graph bytes have already bought longest of audio. Split from fits so the
+// policy can be tested without a device.
+func fitsIn(spare, graph uint64, longest time.Duration) time.Duration {
+	if graph == 0 || longest == 0 {
+		return 0
+	}
+	// In floating point because the integer form overflows: a duration is
+	// nanoseconds, and a gigabyte of spare memory times half a minute of them
+	// is past what an int64 holds. Nothing here needs the precision anyway,
+	// since the rate itself is an estimate.
+	return longest + time.Duration(float64(longest)*float64(spare)/float64(graph))
+}
+
+// free is the device's free memory, or 0 on the CPU, which has enough of it
+// that no clip here is worth bounding against.
+func (m *Model) free() uint64 {
+	if !m.OnGPU() {
+		return 0
+	}
+	devices, err := transcribe.Devices()
+	if err != nil || m.device < 0 || m.device >= len(devices) {
+		return 0
+	}
+	return devices[m.device].MemoryFree
+}
 
 // ErrTruncated means the decode hit the model's output budget before it
 // finished. The transcript that comes back is real but incomplete.
@@ -122,26 +235,6 @@ func (m *Model) Languages() ([]string, error) {
 	return c.Languages, nil
 }
 
-// Measure re-reads what this model costs and keeps the larger answer.
-//
-// Worth calling again after the first transcription: loading allocates the
-// weights, but ggml allocates its compute buffers when it first runs a graph,
-// and on a small model those outweigh the weights several times over. A
-// measurement taken at load alone comes back at about the file size, which is
-// the wrong number to budget a cache against.
-func (m *Model) Measure() {
-	if m.freeAtLoad == 0 {
-		return // the backend reports no memory; the file size stands
-	}
-	dev, err := m.s.Model().Device()
-	if err != nil || dev.MemoryFree == 0 || dev.MemoryFree >= m.freeAtLoad {
-		return
-	}
-	if used := m.freeAtLoad - dev.MemoryFree; used > m.bytes {
-		m.bytes = used
-	}
-}
-
 // deviceIndex is which registered device a load with these options lands on.
 // Zero means the first, which is what the library picks unaided.
 func deviceIndex(opts *transcribe.LoadOptions) int {
@@ -152,8 +245,12 @@ func deviceIndex(opts *transcribe.LoadOptions) int {
 }
 
 // deviceFree is free memory on the device a load with these options will
-// land on, or 0 when the backend does not report it.
+// land on, or 0 when the load is going to the CPU or the backend does not
+// report it.
 func deviceFree(opts *transcribe.LoadOptions) uint64 {
+	if opts != nil && opts.Backend == transcribe.BackendCPU {
+		return 0
+	}
 	devices, err := transcribe.Devices()
 	if err != nil {
 		return 0
@@ -245,26 +342,19 @@ func (m *Model) Arch() string {
 	return m.name + " on " + where
 }
 
-// DeviceMemory is the total memory of the device transcription runs on, or 0
+// DeviceFree is the free memory of the device transcription will run on, or 0
 // when the backend reports none. It is what a cache budget is a fraction of.
-func DeviceMemory() uint64 {
+//
+// Free rather than total, because the card is shared with the desktop that is
+// drawing on it: on this laptop 1.4 GB of the 8 was spoken for before diktat
+// started, and a budget struck against the 8 counts it twice.
+func DeviceFree() uint64 {
 	quiet.Do(func() { transcribe.SetLogHandler(nil) })
 	opts, _, err := placement()
 	if err != nil {
 		return 0
 	}
-	devices, err := transcribe.Devices()
-	if err != nil {
-		return 0
-	}
-	i := 0
-	if opts != nil {
-		i = opts.GPUDevice
-	}
-	if i < 0 || i >= len(devices) {
-		return 0
-	}
-	return devices[i].MemoryTotal
+	return deviceFree(opts)
 }
 
 func (m *Model) Close() {
@@ -281,10 +371,27 @@ func (m *Model) Transcribe(audio []float32) (string, error) {
 	if len(audio) == 0 {
 		return "", nil
 	}
+	// Only a clip longer than any before it allocates, because the compute
+	// buffers are kept at the high-water mark and reused for anything shorter.
+	// So that is the only run worth reading the device across, and what it
+	// drops by is this model's graph, attributable to it rather than to
+	// everything loaded since.
+	clip := time.Duration(len(audio)) * time.Second / sampleRate
+	grow := clip > m.longest
+	var before uint64
+	if grow {
+		before = m.free()
+	}
 	t0 := time.Now()
 	res, err := m.s.Run(context.Background(), audio, nil)
 	if err != nil {
 		return "", err
+	}
+	if grow {
+		if after := m.free(); before > after {
+			m.graph += before - after
+		}
+		m.longest = clip
 	}
 	m.timings = Timings{Mel: res.Timings.Mel, Encode: res.Timings.Encode, Decode: res.Timings.Decode}
 	m.timings.Other = time.Since(t0) - m.timings.Mel - m.timings.Encode - m.timings.Decode

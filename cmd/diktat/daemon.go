@@ -341,16 +341,22 @@ func (d *daemon) evict() {
 }
 
 // cacheBudget is how much memory resident models may hold together.
-// Configured in MB, or two thirds of the compute device's memory: enough to
-// keep a couple of models around, with room left for the rest of the desktop
-// on a shared laptop GPU. A device that reports no memory falls back to a
-// figure that fits the models in the menu without assuming a big card.
+// Configured in MB, or two thirds of what the compute device had free when the
+// daemon started: enough to keep a couple of models around, with room left for
+// the rest of the desktop on a shared laptop GPU. A device that reports no
+// memory falls back to a figure that fits the models in the menu without
+// assuming a big card.
+//
+// Free rather than total, because the third left over has to cover the compute
+// buffers of whichever model is in use, and those grow with the length of the
+// dictation. Struck against the total it would also be counting the memory the
+// compositor already holds, which was never ours to spend.
 func cacheBudget(cfg *config.Config) uint64 {
 	if cfg.ModelCacheMB > 0 {
 		return uint64(cfg.ModelCacheMB) << 20
 	}
-	if total := asr.DeviceMemory(); total > 0 {
-		return total / 3 * 2
+	if free := asr.DeviceFree(); free > 0 {
+		return free / 3 * 2
 	}
 	return 4 << 30
 }
@@ -408,11 +414,12 @@ func warm(m *asr.Model) {
 	}
 	// Loading allocated the weights; those runs allocated the buffers, which
 	// are the larger half and grow with the largest bucket. Now is when the
-	// model's real cost is knowable.
-	m.Measure()
+	// model's real cost is knowable, and when it can say how much longer a
+	// clip it could still take.
 	t := m.Timings()
-	log.Printf("Warmed in %s: %s, %s resident (last bucket: mel %s, encode %s, decode %s, other %s)",
+	log.Printf("Warmed in %s: %s, %s resident, good for %s of audio (last bucket: mel %s, encode %s, decode %s, other %s)",
 		time.Since(t0).Round(time.Millisecond), strings.Join(work, " "), human.Bytes(m.Bytes()),
+		m.AudioLimit().Round(time.Second),
 		t.Mel.Round(time.Millisecond), t.Encode.Round(time.Millisecond),
 		t.Decode.Round(time.Millisecond), t.Other.Round(time.Millisecond))
 }
@@ -568,14 +575,16 @@ func (d *daemon) stopRecording() {
 
 	t0 := time.Now()
 	kernels := d.model.CompiledKernelNames()
-	// Only what the model will refuse outright gets cut, at the quietest moment
-	// near the limit. Most families take the whole utterance and window it
-	// themselves, which they do better than a cut here can: cutting at 30s cost
-	// a broken sentence at every seam even on models that had no limit at all.
-	limit := d.model.MaxAudio()
+	// Only what the model would refuse, or what the card cannot hold, gets cut,
+	// at the quietest moment near the limit. Most families take the whole
+	// utterance and window it themselves, which they do better than a cut here
+	// can: cutting at 30s cost a broken sentence at every seam even on models
+	// that had no limit at all.
+	limit := d.model.AudioLimit()
 	chunks := audio.Chunk(samples, int(limit.Seconds())*audio.SampleRate)
 	if len(chunks) > 1 {
-		log.Printf("Over the model's %s limit, transcribing in %d pieces", limit, len(chunks))
+		log.Printf("Over the %s this model can take now, transcribing in %d pieces",
+			limit.Round(time.Second), len(chunks))
 	}
 	var parts []string
 	for _, chunk := range chunks {

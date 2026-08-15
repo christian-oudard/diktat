@@ -133,7 +133,6 @@ func run(m *asr.Model, stage, kind string, secs float64, pass int, speech []floa
 	}
 	wall := time.Since(t0)
 	compiled := m.CompiledKernelNames()[len(kernels):]
-	m.Measure()
 	t := m.Timings()
 	fmt.Printf("%s\t%s\t%g\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%d\t%s\n", stage, kind, secs, pass,
 		wall.Milliseconds(), t.Mel.Milliseconds(), t.Encode.Milliseconds(),
