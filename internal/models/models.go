@@ -82,20 +82,22 @@ func language(code string) string {
 	return code
 }
 
-// Default is what the daemon loads when not told otherwise. Still whisper,
-// which the measurements below say is the wrong choice for short utterances,
-// because the default is what gets dictated through every day and the
-// alternatives have not been used in anger yet. Switch it once they have.
-const Default = "whisper-tiny.en"
+// Default is what the daemon loads when not told otherwise: the model that is
+// usable on the machine that has no card, since that is what a default has to
+// be. Measured on a minute of dictation, it makes half the errors of the
+// whisper it replaced, 18.4% against 36.8%, and takes 223ms on a CPU where
+// that whisper takes 983ms and the larger parakeet takes 1.1s. Anyone with a
+// GPU should move up to parakeet-tdt-0.6b-v3, which the README says.
+const Default = "parakeet-tdt_ctc-110m"
 
 // Catalog is the whole menu: one entry per niche, not everything upstream
 // publishes. WER is the Open ASR Leaderboard average over its eight
 // short-form English sets, which is a better guide for dictation than
 // LibriSpeech alone.
 //
-//	whisper-tiny.en                       English, the default
-//	whisper-base.en                       English, a step above the default
-//	parakeet-tdt_ctc-110m      6.6% WER   English
+//	whisper-tiny.en                       English, the smallest whisper
+//	whisper-base.en                       English, a step above tiny
+//	parakeet-tdt_ctc-110m      6.6% WER   English, the default
 //	canary-180m-flash                     4 languages at a tenth of the 1b
 //	whisper-small.en                      English, the largest .en whisper
 //	parakeet-tdt-0.6b-v2       5.4% WER   English
@@ -120,8 +122,9 @@ const Default = "whisper-tiny.en"
 // something other than a transcript.
 //
 // whisper-tiny.en is not on that leaderboard and would place last of these
-// if it were; it stays the default only until the newer models have been
-// lived with, since the default is what gets dictated through every day.
+// if it were. It was the default until the models around it had been measured
+// here rather than read about, and it stays in the menu as the floor for a
+// machine that cannot spare 96 MiB.
 //
 // Two shapes of model are here, and the difference matters more than the
 // sizes do. Whisper always encodes a padded 30 second window, so it costs

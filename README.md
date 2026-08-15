@@ -12,7 +12,7 @@ one.
 Fetch a model, run `diktat daemon` for the whole session, and bind
 `diktat toggle` to a key in your Sway config:
 
-    $ diktat model whisper-tiny.en    # offers to download it
+    $ diktat model parakeet-tdt_ctc-110m   # offers to download it
 
     bindsym XF86Favorites exec diktat toggle
 
@@ -81,7 +81,7 @@ live dictation without restarting the session:
 
     $ diktat model                    # the menu, then pick one; Enter keeps
     $ diktat model 3                  # or go straight to the third entry
-    $ diktat model whisper-tiny.en    # or name it
+    $ diktat model parakeet-tdt_ctc-110m   # or name it
 
 Switching to a model that is not in the cache offers to fetch it first, so
 there is nothing to type twice. The menu numbers are the short way in; the
@@ -132,8 +132,8 @@ purpose:
 - Freshly loaded, before any transcription: about 530 MB
 - Steady state after a few minutes of use: about 1310 MB, flat
 
-Those were measured with moonshine alone; whisper-tiny.en, the default,
-is roughly half: 275 MB loaded, settling near 680 MB. The newer and larger
+Those were measured with moonshine alone; the whispers are roughly half: 275
+MB loaded, settling near 680 MB. The newer and larger
 entries in the menu cost considerably more, which is what the cache budget
 below is for.
 

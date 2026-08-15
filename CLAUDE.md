@@ -2,10 +2,12 @@
 
 ## Overview
 
-Voice dictation for Linux/Sway/Wayland. Default model is whisper-tiny.en, run
-on a discrete GPU when there is one. The menu also carries parakeet, canary
-and granite, which beat it on both accuracy and short-utterance latency; the
-default moves once they have been used in anger. Go binaries built via nix `buildGoModule`.
+Voice dictation for Linux/Sway/Wayland. Default model is parakeet-tdt_ctc-110m,
+run on a discrete GPU when there is one, and chosen because it is the smallest
+thing here that is still good without one. The menu runs from a 33 MiB
+moonshine to a 1.8 GiB audio-LLM; parakeet-tdt-0.6b-v3 is the best of them
+measured on this hardware and is what the README recommends to anyone with a
+card. Go binaries built via nix `buildGoModule`.
 Models are downloaded on demand into the user's cache, not at build time.
 Speech recognition is transcribe.cpp throughout, linked in through its Go
 bindings; there is no second engine.
@@ -206,7 +208,7 @@ a Wayland session always sets it, since the compositor's socket lives there.
 
 ```
 nix build
-./result/bin/diktat model whisper-tiny.en
+./result/bin/diktat model parakeet-tdt_ctc-110m
 ./result/bin/diktat daemon
 ```
 
@@ -222,7 +224,7 @@ itself on PATH, `nix profile add .`.
 `~/.config/diktat/config.toml` (optional). Keys:
 
 - `model` - model the daemon starts on before anything has been chosen,
-  default `whisper-tiny.en`. `diktat model` records its choice in
+  default `parakeet-tdt_ctc-110m`. `diktat model` records its choice in
   $XDG_STATE_HOME/diktat/model instead of writing here, since this file is
   hand-authored; that choice outranks this key, and deleting it restores
   this one.
