@@ -22,6 +22,7 @@ import (
 
 	"github.com/christian-oudard/diktat/internal/asr"
 	"github.com/christian-oudard/diktat/internal/audio"
+	"github.com/christian-oudard/diktat/internal/human"
 	"github.com/christian-oudard/diktat/internal/models"
 	"github.com/christian-oudard/diktat/internal/warmup"
 	"github.com/christian-oudard/diktat/internal/wav"
@@ -51,7 +52,11 @@ func main() {
 	if _, err := warmup.Run(model); err != nil {
 		log.Printf("warmup: %v", err)
 	}
-	fmt.Println(model.Arch())
+	// The limit is part of what a model is, not a detail: it says how much of
+	// an utterance this one takes in a single graph before the audio has to be
+	// cut, which on a big model on a small card is under a minute.
+	fmt.Printf("%s, %s resident, good for %s of audio\n", model.Arch(),
+		human.Bytes(model.Bytes()), model.AudioLimit().Round(time.Second))
 
 	for _, path := range fs.Args() {
 		stored, err := load(path)

@@ -5,9 +5,9 @@
 Voice dictation for Linux/Sway/Wayland. Default model is parakeet-tdt_ctc-110m,
 run on a discrete GPU when there is one, and chosen because it is the smallest
 thing here that is still good without one. The menu runs from a 33 MiB
-moonshine to a 1.8 GiB audio-LLM; parakeet-tdt-0.6b-v3 is the best of them
-measured on this hardware and is what the README recommends to anyone with a
-card. Go binaries built via nix `buildGoModule`.
+moonshine to a 1.8 GiB audio-LLM; parakeet-tdt-0.6b-v2 is the best of them on
+both the leaderboard's close-microphone sets and the clip measured here, and is
+what the README recommends to anyone with a card. Go binaries built via nix `buildGoModule`.
 Models are downloaded on demand into the user's cache, not at build time.
 Speech recognition is transcribe.cpp throughout, linked in through its Go
 bindings; there is no second engine.
@@ -35,8 +35,8 @@ engine that is fastest at the current favourite.
   session; it never starts recording by itself and never exits by itself.
   Signal handlers are installed before the model load so a toggle during
   startup is queued rather than killing the process. Recording is unlimited:
-  the utterance ends when the user ends it, and anything past the transcription
-  window is cut into pieces (see Warmup below). Separately, a sample count in
+  the utterance ends when the user ends it, and anything past what the model or
+  the card can take is cut into pieces (see Audio length below). Separately, a sample count in
   `internal/audio` bounds the buffer against a device that lies about its frame
   rate, which an ALSA null device once did to the tune of 19279s of audio in 4s
   of wall clock.
@@ -61,7 +61,8 @@ engine that is fastest at the current favourite.
   number in that listing is how models get selected. Whisper encodes a padded
   30 second window whatever was said, so on a 2 second utterance it costs the
   same as on a 30 second one, while every other family here encodes only what
-  it was given; the whispers earn their place on languages. Several entries are
+  it was given; the whispers earn their place on languages and on being the only
+  family whose memory does not grow with the audio. Several entries are
   recent enough to have no published accuracy figure and are there to be
   tried, not because they are known good.
 - `internal/asr` - one `Model` over transcribe.cpp. There is no backend

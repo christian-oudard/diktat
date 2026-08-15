@@ -34,45 +34,58 @@ does not exit on its own.
 
 ## Which model
 
-Measured here on one laptop RTX 4070, transcribing a 64-second recording of
-connected speech written to be hard: project jargon, homophones only context
-can settle, and numbers spelled out. Word error rate is scored after
-normalizing case, punctuation and number spelling; latency is a warm run on a
-3.2-second utterance, which is what dictation actually costs.
+Two measurements, because neither alone is enough. **Close** is the Open ASR
+Leaderboard's word error rate averaged over its four close-microphone English
+sets, which is what dictation into a headset resembles; its own headline
+average includes far-field meeting rooms and accented conference calls, which
+you will never dictate in, and that reorders the table. **Here** is a
+64-second recording made on this machine, written to be hard: project jargon,
+homophones only context can settle, numbers spelled out.
 
-    model                    MiB    WER   GPU     CPU
-    moonshine-tiny            33  36.8%   19ms    99ms
-    whisper-tiny.en           42  36.8%   30ms   983ms
-    whisper-base.en           60  25.7%   42ms
-    parakeet-tdt_ctc-110m     96  18.4%   20ms   223ms
-    canary-180m-flash        151  33.8%   21ms
-    whisper-small.en         184  25.0%   56ms
-    parakeet-tdt-0.6b-v3     523  15.4%   41ms   1115ms
-    Qwen3-ASR-0.6B           615  29.4%   52ms
-    Qwen3-ASR-1.7B          1447  24.3%  106ms
-    cohere-transcribe-03    1688  35.3%   58ms
-    granite-speech-4.1-2b   1699  19.1%  100ms
+**Resident** and **longest** are measured on one laptop RTX 4070 with 8 GB
+shared with the desktop. Resident is what the model costs the card once warm,
+which is several times the file. Longest is how much audio it takes in one
+graph before the recording has to be cut in two, because for every family but
+whisper the compute buffers grow with the length of what you said.
 
-**Use parakeet-tdt-0.6b-v3.** It is the most accurate model in the menu on
-this recording and among the fastest, 41ms on a short utterance, quicker than
-whisper-base.en at two thirds of its error rate. At 523 MiB it leaves room for
-a second model resident beside it.
+    model                     MiB   close   here   resident   longest
+    moonshine-tiny             33    8.65  36.8%    148 MiB       49s
+    whisper-base.en            60       -  25.7%    179 MiB    10m14s
+    parakeet-tdt_ctc-110m      96    4.46  18.4%    266 MiB     6m53s
+    canary-180m-flash         151    3.96  33.8%    733 MiB      2m5s
+    parakeet-tdt-0.6b-v2      514    3.52  12.5%    764 MiB     4m21s
+    parakeet-tdt-0.6b-v3      523    4.07  15.4%    773 MiB     4m17s
+    whisper-large-v3-turbo    590    4.27      -          -         -
+    Qwen3-ASR-0.6B            615    4.00  29.4%    1.9 GiB     1m14s
+    canary-1b-flash           733    3.42      -          -         -
+    Qwen3-ASR-1.7B           1447    3.49  23.5%    3.1 GiB      1m5s
+    cohere-transcribe-03     1688    3.41  35.3%    2.3 GiB     1m38s
+    granite-speech-4.1-2b    1699    3.82  19.1%    2.4 GiB     1m25s
+    canary-qwen-2.5b         1891    3.34  23.5%    3.4 GiB     1m29s
+
+**Use parakeet-tdt-0.6b-v2.** It is the best English model here on both
+measurements, which is the only reason to trust either of them, and at 568ms
+for a minute of audio it is among the fastest things in the menu. Take
+parakeet-tdt-0.6b-v3 instead if you dictate in a European language: nine more
+mebibytes buys twenty-four more of them, at half a point of English accuracy.
 
 **Use parakeet-tdt_ctc-110m without a GPU, or where 96 MiB matters.** It gives
-up three points of accuracy and is the fastest thing here on a CPU that has to
-do the work: 223ms on the same utterance, against 1115ms for the 0.6b and
-983ms for whisper-tiny.en, which pays for a padded 30-second window whatever
-you said. moonshine-tiny is the floor below that, 33 MiB and 99ms on a CPU,
-for twice the error rate.
+up two points and is the fastest thing here on a CPU that has to do the work,
+223ms on a short utterance against 1115ms for the 0.6b. moonshine-tiny is the
+floor below that, 33 MiB and 99ms on a CPU, for twice the error rate.
 
-Everything above 600 MiB was dominated on both axes: slower than the 0.6b
-parakeet and less accurate. Two of them, granite and Qwen3-ASR-1.7B, could not
-allocate a graph for the whole minute of audio on an 8 GB card shared with a
-desktop, and had to be scored on halves.
+Nothing above 600 MiB earned its size for dictation. They are slower, they hold
+gigabytes, and every one of them cuts a dictation short of two minutes.
+`canary-qwen-2.5b` is the accuracy ceiling of anything that will run here and
+it is worth trying if you want it; it costs 3.4 GB of an 8 GB card and 1.9
+seconds an utterance.
 
-Read the numbers as a ranking, not as absolutes. One speaker, one recording,
-English, and jargon drawn from this project, on a passage built to be
-adversarial: the same models score far lower error rates on ordinary prose.
+**Do not read the "here" column as a ranking.** The passage is 139 words, so a
+three-point difference is four words and well inside the noise; the two
+columns disagree on canary-180m-flash by a wide margin, and `canary-qwen-2.5b`
+moved nine points between runs purely because it stopped cutting the clip in
+two. It is a sanity check on one speaker's voice, and the leaderboard column is
+the one averaged over four datasets.
 
 ## Switching models
 
@@ -101,13 +114,14 @@ out-of-menu model still works.
 Every model stays resident once loaded, so switching back to one already seen
 is instant, up to a memory ceiling: past it the least recently used ones are
 dropped, never the one in use. Set `model_cache_mb` to change the ceiling; it
-defaults to two thirds of the GPU's memory. A swap does not interrupt a
-recording in progress, since the capture buffer is independent of the model.
+defaults to two thirds of what the GPU had free at startup. A swap does not
+interrupt a recording in progress, since the capture buffer is independent of
+the model.
 If the new model fails to load, the daemon keeps serving with the one it has.
 
 Whisper always encodes a padded 30-second window, so a 2-second utterance
 costs it the same as a 30-second one, while the rest encode only what they
-were given. On this laptop's CPU, whisper-tiny.en against
+were given. On this laptop's CPU, the smallest whisper against
 parakeet-tdt_ctc-110m: 1045ms vs 136ms on a 2-second utterance, 960ms vs
 235ms on a 3-second one, then 2365ms vs 2335ms at 30 seconds and 2639ms vs
 4768ms at 55. The flat cost is a liability up to about half a minute and an
@@ -115,6 +129,13 @@ asset past it, and dictation is mostly short utterances, so the menu leads
 with the models that scale with the audio. On a GPU the gap narrows, since
 the padded encoder parallelises well, and the reason to prefer parakeet
 becomes accuracy per megabyte rather than latency.
+
+The same window makes whisper the only family whose memory is flat: its
+compute buffers cost the same on a second of audio as on five minutes, where
+everything else grows with the length until the card cannot hold the graph.
+That is why the menu keeps a small whisper, and it is the reason the "longest"
+column above says 10m14s for whisper-base.en and 1m5s for a model six times
+its size.
 
 A switch does not persist across a daemon restart; the daemon always comes
 back on the model named in the config, or on the default.

@@ -21,10 +21,10 @@ func TestSelectRoundTrip(t *testing.T) {
 		t.Errorf("Selected() = %q after Select", got)
 	}
 	// Choosing again replaces rather than appends.
-	if err := Select("whisper-tiny.en"); err != nil {
+	if err := Select("whisper-base.en"); err != nil {
 		t.Fatal(err)
 	}
-	if got := Selected(); got != "whisper-tiny.en" {
+	if got := Selected(); got != "whisper-base.en" {
 		t.Errorf("Selected() = %q after a second Select", got)
 	}
 }

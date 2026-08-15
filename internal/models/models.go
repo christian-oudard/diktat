@@ -84,10 +84,10 @@ func language(code string) string {
 
 // Default is what the daemon loads when not told otherwise: the model that is
 // usable on the machine that has no card, since that is what a default has to
-// be. Measured on a minute of dictation, it makes half the errors of the
-// whisper it replaced, 18.4% against 36.8%, and takes 223ms on a CPU where
-// that whisper takes 983ms and the larger parakeet takes 1.1s. Anyone with a
-// GPU should move up to parakeet-tdt-0.6b-v3, which the README says.
+// be. Measured on a minute of dictation it makes half the errors of the
+// whisper-tiny.en it replaced, 18.4% against 36.8%, and takes 223ms on a CPU
+// where that whisper took 983ms and the 0.6b parakeet takes 1.1s. Anyone with
+// a GPU should move up to parakeet-tdt-0.6b-v2, which the README says.
 const Default = "parakeet-tdt_ctc-110m"
 
 // Catalog is the whole menu: one entry per niche, not everything upstream
@@ -95,11 +95,9 @@ const Default = "parakeet-tdt_ctc-110m"
 // short-form English sets, which is a better guide for dictation than
 // LibriSpeech alone.
 //
-//	whisper-tiny.en                       English, the smallest whisper
-//	whisper-base.en                       English, a step above tiny
+//	whisper-base.en                       English, flat cost at any length
 //	parakeet-tdt_ctc-110m      6.6% WER   English, the default
 //	canary-180m-flash                     4 languages at a tenth of the 1b
-//	whisper-small.en                      English, the largest .en whisper
 //	parakeet-tdt-0.6b-v2       5.4% WER   English
 //	parakeet-tdt-0.6b-v3                  the v2 with 25 European languages
 //	whisper-large-v3-turbo     7.0% WER   99 languages
@@ -110,7 +108,7 @@ const Default = "parakeet-tdt_ctc-110m"
 //	granite-speech-4.1-2b-nar  4.9% WER   English, no timestamps
 //	canary-qwen-2.5b                      English, an LLM for a decoder
 //
-// The blanks are models the leaderboard does not carry: the small whispers
+// The blanks are models the leaderboard does not carry: whisper-base.en
 // because it only measures large-v3-turbo, and the recent ones because it has
 // not caught up with them. A number invented here would be worse than the
 // blank. Those are in the menu to be tried, not because they are known good.
@@ -121,15 +119,10 @@ const Default = "parakeet-tdt_ctc-110m"
 // instruction, so unlike Voxtral it cannot be talked into answering with
 // something other than a transcript.
 //
-// whisper-tiny.en is not on that leaderboard and would place last of these
-// if it were. It was the default until the models around it had been measured
-// here rather than read about, and it stays in the menu as the floor for a
-// machine that cannot spare 96 MiB.
-//
 // Two shapes of model are here, and the difference matters more than the
-// sizes do. Whisper always encodes a padded 30 second window, so it costs
-// the same whatever was said; the rest encode only the audio they were
-// given. Measured on this laptop's CPU, whisper-tiny.en against
+// sizes do. Whisper always encodes a padded 30 second window, so it costs the
+// same whatever was said; the rest encode only the audio they were given.
+// Measured on this laptop's CPU, the smallest whisper against
 // parakeet-tdt_ctc-110m:
 //
 //	 2s utterance   1045ms    136ms
@@ -139,26 +132,35 @@ const Default = "parakeet-tdt_ctc-110m"
 //
 // So the flat cost is a liability up to about 30 seconds and an asset past
 // it. Dictation is mostly short utterances, which is why the menu leads with
-// the models that scale with the audio, and the crossover is only reachable
-// by someone talking for half a minute without stopping. One whisper stays
-// for the languages the others lack.
+// the models that scale with the audio.
+//
+// The same window makes whisper the only family whose memory is flat too: its
+// compute buffers cost the same 0.10 GiB on one second of audio as on five
+// minutes, where every other family here grows with the length until the card
+// cannot hold the graph (see Audio length in CLAUDE.md). That is why both
+// whispers stay. whisper-large-v3-turbo has languages the others lack, and
+// whisper-base.en is the cheap way to transcribe something long on a card
+// with nothing to spare, which nothing else in this menu can do at all.
+//
+// Two .en whispers were dropped once there was something to compare them
+// against. whisper-small.en at 184 MiB was beaten by parakeet-tdt_ctc-110m at
+// 96, and whisper-tiny.en at 42 MiB by moonshine-tiny at 33, which leaves
+// them covering a niche twice each.
 //
 // moonshine-tiny is the floor: worth it only where nothing else fits.
 // granite is the ceiling on accuracy, and cohere-transcribe on size; both are
 // big enough that the cache budget will evict something to hold them.
 //
-// parakeet-tdt-0.6b-v3 is here beside v2 rather than instead of it. On paper
-// it dominates: nine more mebibytes for twenty-four more languages, same
-// family and same shape. Whether it gives up English accuracy for them is not
-// something the leaderboard answers yet, so both stay until one has been
-// dictated through.
+// parakeet-tdt-0.6b-v3 is here beside v2 rather than instead of it. Nine more
+// mebibytes buys twenty-four more languages, and it does cost English accuracy
+// to get them: 4.07 against 3.52 on the leaderboard's close-microphone sets,
+// and 15.4% against 12.5% on the clip measured here. Two measurements agreeing
+// is why the README names v2 and not v3.
 var Catalog = []Spec{
 	{"moonshine-tiny", "Q8_0", 33, []string{"en"}},
-	{"whisper-tiny.en", "Q5_K_M", 42, []string{"en"}},
 	{"whisper-base.en", "Q5_K_M", 60, []string{"en"}},
 	{"parakeet-tdt_ctc-110m", "Q5_K_M", 96, []string{"en"}},
 	{"canary-180m-flash", "Q5_K_M", 151, []string{"en", "de", "es", "fr"}},
-	{"whisper-small.en", "Q5_K_M", 184, []string{"en"}},
 	{"parakeet-tdt-0.6b-v2", "Q5_K_M", 514, []string{"en"}},
 	{"parakeet-tdt-0.6b-v3", "Q5_K_M", 523, []string{
 		"en", "bg", "cs", "da", "de", "el", "es", "et", "fi", "fr", "hr", "hu",
