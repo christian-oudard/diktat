@@ -41,15 +41,13 @@ bindings; there is no second engine.
 - `internal/models` - the menu. Thirteen entries, none bundled: everything is
   downloaded into `~/.cache/diktat/models` from the `handy-computer` GGUF
   repos, so no model is a special case. Downloads are never implicit. The
-  menu carries a language set and a vocab flag per model, both hand-kept
-  because the menu has to answer before a model is downloaded, and both
-  checked against the library by a test for whatever is present. Entries are
-  ordered by download size, which is also roughly the cost order, and the
+  menu carries a language set per model, hand-kept because the menu has to
+  answer before a model is downloaded, and checked against the library by a
+  test for whatever is present. Entries are ordered by download size, which is also roughly the cost order, and the
   number in that listing is how models get selected. Whisper encodes a padded
   30 second window whatever was said, so on a 2 second utterance it costs the
   same as on a 30 second one, while every other family here encodes only what
-  it was given; the whispers earn their place on languages and on vocabulary
-  hints, which no other family in the library takes. Several entries are
+  it was given; the whispers earn their place on languages. Several entries are
   recent enough to have no published accuracy figure and are there to be
   tried, not because they are known good.
 - `internal/asr` - one `Model` over transcribe.cpp. There is no backend
@@ -224,13 +222,6 @@ itself on PATH, `nix profile add .`.
 - `paste_methods` - map of sway app_id to paste key combo (`C-v`, `C-S-v`)
 - `history_file` - JSONL append target for each transcription
 
-- `vocabulary_hints` - words the model would otherwise get wrong, passed as
-  whisper's initial prompt. Only the whisper family takes them: it is the one
-  architecture here with a prompt to condition on, which `asr.Model` probes
-  for with `FEATURE_INITIAL_PROMPT` plus acceptance of the whisper run
-  extension. The daemon logs when a loaded model cannot use them, since a
-  list that is silently ignored looks like it is working.
-
 Unknown keys are reported rather than ignored. TOML drops them silently,
-which is how `vocabulary_hints` sat in a real config doing nothing from the
-Python rewrite until it was wired back up.
+which is how a key that had quietly stopped meaning anything sat in a real
+config looking like it worked.

@@ -52,8 +52,8 @@ func runDaemon(args []string) {
 		cfg = &config.Config{}
 	}
 	for _, key := range unknown {
-		// Silence here is how vocabulary_hints sat in a real config doing
-		// nothing for two months.
+		// Silence here is how a key that had stopped meaning anything sat
+		// in a real config looking like it worked.
 		log.Printf("config: ignoring unknown key %q", key)
 	}
 	// Nothing is bundled, and nothing is downloaded implicitly: say what to
@@ -104,7 +104,6 @@ func runDaemon(args []string) {
 	}
 	defer d.closeModels()
 	warm(model)
-	d.applyVocabulary(model)
 	d.publishModel()
 	log.Printf("Model loaded: %s", model.Arch())
 	setStatus("")
@@ -245,11 +244,7 @@ func (d *daemon) switchTo(dir string) {
 			// what the buckets cost; this says what came before it.
 			log.Printf("Loaded %s in %s, warming", model.Name(),
 				time.Since(t0).Round(time.Millisecond))
-			// Warm first, then hand over the hints: an instructed audio-LLM
-			// told to expect terms and then given warm audio has been seen
-			// to invent its way to the decode budget.
 			warm(model)
-			d.applyVocabulary(model)
 		}
 		d.loaded <- loadResult{dir: dir, model: model, err: err, took: time.Since(t0)}
 	}()
@@ -288,21 +283,6 @@ func (d *daemon) install(dir string, model *asr.Model) {
 	d.evict()
 	d.publishModel()
 	d.restoreStatus()
-}
-
-// applyVocabulary hands the configured hints to a freshly loaded model, and
-// says so when the family cannot use them: a list that is quietly ignored is
-// worse than no list, since it looks like it is working.
-func (d *daemon) applyVocabulary(m *asr.Model) {
-	if d.cfg.VocabularyHints == "" {
-		return
-	}
-	if !m.TakesVocabulary() {
-		log.Printf("Vocabulary hints ignored: %s takes no initial prompt", m.Name())
-		return
-	}
-	m.SetVocabulary(d.cfg.VocabularyHints)
-	log.Printf("Vocabulary hints applied (%d chars)", len(d.cfg.VocabularyHints))
 }
 
 // touch records dir as the most recently used model.

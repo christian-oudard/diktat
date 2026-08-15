@@ -23,12 +23,6 @@ type Spec struct {
 	// of fetching one. Measured from the published file, not converted from a
 	// decimal figure: the two differ by 5% and the column says MiB.
 	MiB int
-	// Vocab says the family can be conditioned on a vocabulary list, by a
-	// prompt or by an instruction. Architectural rather than per-file, so it is recorded
-	// here instead of loading every model to ask: the menu has to answer
-	// before anything is downloaded. TestVocabMatchesLibrary checks it
-	// against the library for whatever is present.
-	Vocab bool
 	// Langs are the language codes the model advertises, or nil for a model
 	// that takes most of them: whisper-large-v3-turbo lists a hundred, which
 	// is not a menu column. Checked against the library the same way.
@@ -103,7 +97,7 @@ const Default = "whisper-tiny.en"
 //	whisper-base.en                       English, a step above the default
 //	parakeet-tdt_ctc-110m      6.6% WER   English
 //	canary-180m-flash                     4 languages at a tenth of the 1b
-//	whisper-small.en                      English, hints without the size
+//	whisper-small.en                      English, the largest .en whisper
 //	parakeet-tdt-0.6b-v2       5.4% WER   English
 //	parakeet-tdt-0.6b-v3                  the v2 with 25 European languages
 //	whisper-large-v3-turbo     7.0% WER   99 languages
@@ -146,21 +140,6 @@ const Default = "whisper-tiny.en"
 // by someone talking for half a minute without stopping. One whisper stays
 // for the languages the others lack.
 //
-// Only whisper takes vocabulary hints, which is most of its remaining
-// argument here: it is the one family the library can condition at all. So
-// the hinted models are a size progression of their own, and it used to run
-// from tiny.en straight to large-v3-turbo: fourteen times the size and
-// ninety-eight unused languages, to get better English. base.en and small.en
-// are the sizes between.
-//
-// Voxtral could take them too, as an instruction rather than a prompt, and
-// was in this menu for it. It left because whisper-large-v3-turbo does the
-// same job better on every axis that matters: a fifth the size, ninety-nine
-// languages against eight, and a decoder that is biased rather than an
-// audio-LLM that is asked. Voxtral won on a point of WER and lost on
-// everything else. asr.promptOptions still knows how to instruct one, so a
-// path to a voxtral GGUF outside this menu keeps working.
-//
 // moonshine-tiny is the floor: worth it only where nothing else fits.
 // granite is the ceiling on accuracy, and cohere-transcribe on size; both are
 // big enough that the cache budget will evict something to hold them.
@@ -171,24 +150,24 @@ const Default = "whisper-tiny.en"
 // something the leaderboard answers yet, so both stay until one has been
 // dictated through.
 var Catalog = []Spec{
-	{"moonshine-tiny", "Q8_0", 33, false, []string{"en"}},
-	{"whisper-tiny.en", "Q5_K_M", 42, true, []string{"en"}},
-	{"whisper-base.en", "Q5_K_M", 60, true, []string{"en"}},
-	{"parakeet-tdt_ctc-110m", "Q5_K_M", 96, false, []string{"en"}},
-	{"canary-180m-flash", "Q5_K_M", 151, false, []string{"en", "de", "es", "fr"}},
-	{"whisper-small.en", "Q5_K_M", 184, true, []string{"en"}},
-	{"parakeet-tdt-0.6b-v2", "Q5_K_M", 514, false, []string{"en"}},
-	{"parakeet-tdt-0.6b-v3", "Q5_K_M", 523, false, []string{
+	{"moonshine-tiny", "Q8_0", 33, []string{"en"}},
+	{"whisper-tiny.en", "Q5_K_M", 42, []string{"en"}},
+	{"whisper-base.en", "Q5_K_M", 60, []string{"en"}},
+	{"parakeet-tdt_ctc-110m", "Q5_K_M", 96, []string{"en"}},
+	{"canary-180m-flash", "Q5_K_M", 151, []string{"en", "de", "es", "fr"}},
+	{"whisper-small.en", "Q5_K_M", 184, []string{"en"}},
+	{"parakeet-tdt-0.6b-v2", "Q5_K_M", 514, []string{"en"}},
+	{"parakeet-tdt-0.6b-v3", "Q5_K_M", 523, []string{
 		"en", "bg", "cs", "da", "de", "el", "es", "et", "fi", "fr", "hr", "hu",
 		"it", "lt", "lv", "mt", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "uk"}},
-	{"whisper-large-v3-turbo", "Q5_K_M", 590, true, nil},
-	{"Qwen3-ASR-0.6B", "Q5_K_M", 615, false, qwen3Langs},
-	{"canary-1b-flash", "Q5_K_M", 733, false, []string{"en", "de", "es", "fr"}},
-	{"Qwen3-ASR-1.7B", "Q5_K_M", 1447, false, qwen3Langs},
-	{"cohere-transcribe-03-2026", "Q5_K_M", 1688, false, []string{
+	{"whisper-large-v3-turbo", "Q5_K_M", 590, nil},
+	{"Qwen3-ASR-0.6B", "Q5_K_M", 615, qwen3Langs},
+	{"canary-1b-flash", "Q5_K_M", 733, []string{"en", "de", "es", "fr"}},
+	{"Qwen3-ASR-1.7B", "Q5_K_M", 1447, qwen3Langs},
+	{"cohere-transcribe-03-2026", "Q5_K_M", 1688, []string{
 		"en", "ar", "de", "el", "es", "fr", "it", "ja", "ko", "nl", "pl", "pt", "vi", "zh"}},
-	{"granite-speech-4.1-2b-nar", "Q5_K_M", 1699, false, []string{"en", "de", "es", "fr", "pt"}},
-	{"canary-qwen-2.5b", "Q5_K_M", 1891, false, []string{"en"}},
+	{"granite-speech-4.1-2b-nar", "Q5_K_M", 1699, []string{"en", "de", "es", "fr", "pt"}},
+	{"canary-qwen-2.5b", "Q5_K_M", 1891, []string{"en"}},
 }
 
 // qwen3Langs is the set both Qwen3-ASR sizes advertise, which is the same set.

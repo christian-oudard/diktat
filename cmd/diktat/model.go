@@ -69,16 +69,16 @@ func listModels() string {
 
 	// The number is right-aligned because the menu is past ten entries, and a
 	// ragged one shifts every column after it on the rows that need it most.
-	fmt.Printf("  %2s %-28s %8s  %s  %s  %s\n",
-		"#", "Name", "Size", "Vocab", "Downloaded", "Languages")
+	fmt.Printf("  %2s %-28s %8s  %s  %s\n",
+		"#", "Name", "Size", "Downloaded", "Languages")
 	inUse := ""
 	for i, s := range models.Catalog {
 		mark := " "
 		if s.Path() == current {
 			mark, inUse = "*", s.Name
 		}
-		fmt.Printf("%s %2d %-28s %8s  %s  %s  %s\n", mark, i+1, s.Name, s.Size(),
-			tick(s.Vocab, "Vocab"), tick(s.Downloaded(), "Downloaded"), s.Languages())
+		fmt.Printf("%s %2d %-28s %8s  %s  %s\n", mark, i+1, s.Name, s.Size(),
+			tick(s.Downloaded(), "Downloaded"), s.Languages())
 	}
 	// A model outside the menu gets no marker, so there would otherwise be
 	// nothing anywhere saying what is in use. Say when it is not there: a

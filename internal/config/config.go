@@ -18,11 +18,6 @@ type Config struct {
 	Model        string            `toml:"model"`
 	PasteMethods map[string]string `toml:"paste_methods"`
 	HistoryFile  string            `toml:"history_file"`
-	// VocabularyHints are words the model would otherwise get wrong: jargon,
-	// product names, acronyms. They are passed as whisper's initial prompt,
-	// which biases the decode toward them without forbidding anything else.
-	// Only the whisper family takes them; see asr.Model.SetVocabulary.
-	VocabularyHints string `toml:"vocabulary_hints"`
 	// ModelCacheMB caps what resident models may hold together, in MB. The
 	// daemon keeps every model it loads so switching back is instant, which
 	// needs a ceiling once the models are large: on a shared laptop GPU the
@@ -41,7 +36,7 @@ func DefaultPath() string {
 // and no error, so callers can ignore the absence of user config.
 //
 // Unknown keys come back in the second return. TOML ignores them silently,
-// which is how a `vocabulary_hints` key sat in a real config for months doing
+// which is how a key that had stopped meaning anything sat in a real config
 // nothing: it was never in this struct, so it was never read, and nothing
 // ever said so. A typo deserves the same treatment.
 func Load(path string) (*Config, []string, error) {

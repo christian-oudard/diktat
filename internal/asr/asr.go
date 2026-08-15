@@ -39,11 +39,6 @@ type Model struct {
 	freeAtLoad uint64
 	// timings is where the last transcription went.
 	timings Timings
-	// vocabulary biases the decode toward words the model would otherwise
-	// get wrong. promptKind is the extension that carries it for this
-	// family, or 0 when the family has no way to take one.
-	vocabulary string
-	promptKind transcribe.ExtKind
 }
 
 // Timings is where a transcription's time went. Encode dominates for whisper,
@@ -74,7 +69,6 @@ func Load(path string) (*Model, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", filepath.Base(path), err)
 	}
-	mm := s.Model()
 	m := &Model{
 		s:          s,
 		name:       strings.TrimSuffix(filepath.Base(path), ".gguf"),
@@ -82,7 +76,6 @@ func Load(path string) (*Model, error) {
 		device:     deviceIndex(opts),
 		bytes:      uint64(info.Size()),
 		freeAtLoad: before,
-		promptKind: promptKind(mm),
 	}
 	m.Measure()
 	return m, nil
@@ -103,59 +96,6 @@ var ErrTruncated = transcribe.ErrOutputTruncated
 
 // Timings is where the last transcription's time went.
 func (m *Model) Timings() Timings { return m.timings }
-
-// SetVocabulary biases the decode toward these words: jargon, product names
-// and acronyms that a general model renders as whatever it knows instead.
-// Passed as whisper's initial prompt, which is a nudge rather than a rule, so
-// nothing outside the list becomes unsayable.
-//
-// Only whisper takes it. Everything else in the menu is an encoder-decoder or
-// a transducer with no prompt to condition on, and TakesVocabulary says which
-// is which so a caller can say so rather than wonder why nothing changed.
-func (m *Model) SetVocabulary(hints string) { m.vocabulary = strings.TrimSpace(hints) }
-
-// TakesVocabulary reports whether SetVocabulary does anything for this model.
-func (m *Model) TakesVocabulary() bool { return m.promptKind != 0 }
-
-// promptKind is the run extension this model takes a prompt through, or 0.
-//
-// Two families carry one, by different mechanisms: whisper conditions its
-// decoder on the text, voxtral hands it to a language model as an
-// instruction. Both halves are probed, the capability and the extension that
-// carries it, because voxtral advertised the capability for a while with no
-// extension to deliver it.
-func promptKind(m *transcribe.Model) transcribe.ExtKind {
-	if !m.Supports(transcribe.FeatureInitialPrompt) {
-		return 0
-	}
-	// Whisper conditions its decoder on the words; voxtral is an audio-LLM
-	// and is asked to follow an instruction. Both work, and both are worth
-	// having, but only where there is speech to transcribe: given silence an
-	// instructed audio-LLM invents something and runs to its decode budget.
-	// The daemon warms before it applies these, and refuses to transcribe a
-	// silent capture, which is what that costs.
-	for _, kind := range []transcribe.ExtKind{transcribe.KindWhisperRun, transcribe.KindVoxtralRun} {
-		if m.AcceptsExtension(transcribe.SlotRun, kind) {
-			return kind
-		}
-	}
-	return 0
-}
-
-// promptOptions builds the family's run extension around the hints.
-func (m *Model) promptOptions() transcribe.RunExtension {
-	switch m.promptKind {
-	case transcribe.KindWhisperRun:
-		return &transcribe.WhisperRunOptions{InitialPrompt: m.vocabulary}
-	case transcribe.KindVoxtralRun:
-		// An instruction, since that is what this family takes. Measured
-		// with thirty terms over real speech: transcribes correctly.
-		return &transcribe.VoxtralRunOptions{
-			Instruction: "Transcribe the audio. Expected terms: " + m.vocabulary,
-		}
-	}
-	return nil
-}
 
 // MaxAudio is the longest clip this model will take in one run, or 0 when it
 // has no practical limit because the family chunks internally. It is the
@@ -341,12 +281,8 @@ func (m *Model) Transcribe(audio []float32) (string, error) {
 	if len(audio) == 0 {
 		return "", nil
 	}
-	var opts *transcribe.RunOptions
-	if m.vocabulary != "" && m.promptKind != 0 {
-		opts = &transcribe.RunOptions{Family: m.promptOptions()}
-	}
 	t0 := time.Now()
-	res, err := m.s.Run(context.Background(), audio, opts)
+	res, err := m.s.Run(context.Background(), audio, nil)
 	if err != nil {
 		return "", err
 	}
