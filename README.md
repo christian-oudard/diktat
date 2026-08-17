@@ -7,6 +7,12 @@ one.
 
     $ nix profile add .
 
+Not alongside the home-manager module below. `~/.nix-profile/bin` comes first
+on PATH, so a profile install shadows the managed one and never moves again:
+`diktat version` goes on reporting the build from the day it was installed
+while every rebuild updates a binary nothing runs. `nix profile remove diktat`
+undoes it. Pick one or the other.
+
 ## Usage
 
 Fetch a model, run `diktat daemon` for the whole session, and bind
