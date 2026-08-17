@@ -580,7 +580,7 @@ func (d *daemon) appendHistory(text string) {
 	if d.cfg.HistoryFile == "" {
 		return
 	}
-	path := d.cfg.HistoryFile
+	path := string(d.cfg.HistoryFile)
 	if path[0] == '~' {
 		home, _ := os.UserHomeDir()
 		path = filepath.Join(home, path[1:])
@@ -589,7 +589,9 @@ func (d *daemon) appendHistory(text string) {
 		log.Printf("history mkdir: %v", err)
 		return
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	// 0600: this is every sentence ever dictated, which is the same reason
+	// the last-text file is kept in a mode 0700 directory.
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		log.Printf("history open: %v", err)
 		return

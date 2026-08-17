@@ -3,11 +3,14 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/christian-oudard/diktat/internal/xdg"
 )
 
 // Config is the on-disk schema. All fields are optional.
@@ -17,13 +20,47 @@ type Config struct {
 	// than to whatever was last selected.
 	Model        string            `toml:"model"`
 	PasteMethods map[string]string `toml:"paste_methods"`
-	HistoryFile  string            `toml:"history_file"`
+	HistoryFile  HistoryFile       `toml:"history_file"`
 	// ModelCacheMB caps what resident models may hold together, in MB. The
 	// daemon keeps every model it loads so switching back is instant, which
 	// needs a ceiling once the models are large: on a shared laptop GPU the
 	// memory is wanted by the desktop too. 0 takes two thirds of the compute
 	// device's memory.
 	ModelCacheMB int `toml:"model_cache_mb"`
+}
+
+// HistoryFile is where each transcription is appended, or empty for nowhere.
+//
+// It reads a path or a bool. false is the same as leaving the key out, no
+// history; true keeps one at DefaultHistoryPath, so wanting a history costs
+// nobody a decision about where to put it. Both halves of that matter: on or
+// off is what a person reaches for first, and a key that takes only a path
+// answers `false` by failing to parse the whole file, taking every other
+// setting down with it. That is how a working paste_methods table went
+// quietly missing and every dictation went back to being typed one character
+// at a time.
+type HistoryFile string
+
+// DefaultHistoryPath is where `history_file = true` writes. XDG names state
+// as the place for "actions history", and it already holds the model choice.
+func DefaultHistoryPath() string {
+	return filepath.Join(xdg.StateDir(), "history.jsonl")
+}
+
+func (h *HistoryFile) UnmarshalTOML(v any) error {
+	switch value := v.(type) {
+	case string:
+		*h = HistoryFile(value)
+		return nil
+	case bool:
+		if value {
+			*h = HistoryFile(DefaultHistoryPath())
+		} else {
+			*h = ""
+		}
+		return nil
+	}
+	return fmt.Errorf("history_file must be a path, true or false, not %T", v)
 }
 
 // DefaultPath returns the standard config location.

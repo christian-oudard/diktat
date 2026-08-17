@@ -325,8 +325,18 @@ itself on PATH, `nix profile add .`.
 - `model_cache_mb` - ceiling on what resident models hold together. 0 takes
   two thirds of what the compute device had free at startup.
 - `paste_methods` - map of sway app_id to paste key combo (`C-v`, `C-S-v`)
-- `history_file` - JSONL append target for each transcription
+- `history_file` - JSONL append target for each transcription. A path, or
+  `true` for `$XDG_STATE_HOME/diktat/history.jsonl`, or `false` for no
+  history, which is also what leaving the key out does. It holds what was
+  said, so the file is 0600.
 
 Unknown keys are reported rather than ignored. TOML drops them silently,
 which is how a key that had quietly stopped meaning anything sat in a real
 config looking like it worked.
+
+A key with the right name and the wrong type is worse than an unknown one:
+the decode fails, and every caller here answered that by carrying on with an
+empty Config. `history_file = false` in a real config is how that was found,
+months after the paste_methods table below it had stopped being read, and the
+only report was a line in a log that was truncated at every start. Hence
+`history_file` taking a bool at all, and hence the log going to the journal.
