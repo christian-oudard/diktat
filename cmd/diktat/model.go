@@ -111,7 +111,11 @@ func loadedModel() string {
 	if ipc.ReadPID() == 0 {
 		return ""
 	}
-	raw, err := os.ReadFile(ipc.ModelFile)
+	path, err := ipc.ModelPath()
+	if err != nil {
+		return ""
+	}
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
@@ -163,7 +167,11 @@ func switchModel(nameOrNumber string) {
 	if pid == 0 {
 		return
 	}
-	if err := os.WriteFile(ipc.ModelFile, []byte(path), 0644); err != nil {
+	modelPath, err := ipc.ModelPath()
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := os.WriteFile(modelPath, []byte(path), 0644); err != nil {
 		log.Fatalf("write model file: %v", err)
 	}
 	if err := syscall.Kill(pid, syscall.SIGHUP); err != nil {

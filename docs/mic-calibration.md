@@ -39,23 +39,24 @@ cleaner, wider-band audio and usually transcribes better.
 
 ## 2. Read the daemon log
 
-The daemon logs each capture's level and result to `/tmp/diktat-daemon.log`
-(truncated on each start):
+The daemon logs each capture's level and result to stderr, which is the
+journal when systemd started it:
 
 ```
-$ tail -f /tmp/diktat-daemon.log
+$ journalctl --user -u diktat -f
 ```
 
-Each transcription logs the capture's duration, peak, RMS, applied gain, and
-the decoded text:
+Each transcription logs the capture's duration, peak, RMS and applied gain,
+then what the decode cost and how much text came back. The text itself is
+never logged, so the length is what says whether anything was heard:
 
 ```
-Transcribing <dur>s (peak <p> rms <r> gain <g>x)...
-Transcribed in <t>: "<text>"
+Transcribing <dur>s (wall <w>s, peak <p> rms <r> gain <g>x)...
+Transcribed in <t> (mel <m>, encode <e>, decode <d>, other <o>): <n> chars
 ```
 
-An empty result with low RMS points at the mic. An empty result with healthy
-RMS (above ~0.04) points at the model path.
+Zero chars with low RMS points at the mic. Zero chars with healthy RMS
+(above ~0.04) points at the model path.
 
 ## 3. Capture a fixed corpus
 

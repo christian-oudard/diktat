@@ -19,6 +19,91 @@ Fetch a model, run `diktat daemon` for the whole session, and bind
 - First press: starts recording
 - Second press: stops recording, transcribes, types result
 
+## Running the daemon
+
+The daemon holds the model for the whole session, so it wants a service
+manager rather than a line in a window manager config: something has to
+restart it when it dies, cap what it holds, and keep a second copy from
+starting. There is no single-instance guard, and the second daemon overwrites
+the first one's PID file, so `toggle` reaches only the newer one while the
+older keeps its model resident for the rest of the session.
+
+Pick whichever of these matches the session. All of them end with the same
+thing running; they differ only in what starts it.
+
+### With nix, via home-manager
+
+    imports = [ inputs.diktat.homeManagerModules.default ];
+
+Installs the package and the unit together. The unit's `ExecStart` names a
+store path, so an upgrade changes the unit, and home-manager restarts the
+daemon on the new build during activation.
+
+### Without nix, as a systemd user service
+
+`~/.config/systemd/user/diktat.service`:
+
+    [Unit]
+    Description=diktat dictation daemon
+    PartOf=graphical-session.target
+
+    [Service]
+    ExecStart=%h/.local/bin/diktat daemon
+    Restart=on-failure
+    RestartSec=2
+
+    [Install]
+    WantedBy=graphical-session.target
+
+Then `systemctl --user enable diktat`. Add `MemoryMax=` if the model in use
+deserves a ceiling; what it needs is the model's, not the daemon's.
+
+### Sessions a display manager starts
+
+Nothing further. GNOME, KDE, and anything else launched by a display manager
+reach `graphical-session.target` on X11 and on Wayland alike, which is what
+the unit is wanted by, so the daemon starts with the session; `PartOf` stops
+it when the session ends.
+
+### Window managers started from a tty
+
+sway under greetd, i3 under `startx` and the like never reach that target, so
+say it in the window manager config, which then names what it starts:
+
+    # sway
+    exec_always systemctl --user start diktat.service
+    exec swaymsg -t subscribe '["shutdown"]' && \
+        systemctl --user stop diktat.service
+
+    # i3
+    exec_always --no-startup-id systemctl --user start diktat.service
+
+`start` is idempotent, so a config reload is a no-op rather than a second
+daemon, which is what `exec_always diktat daemon` would give.
+
+Nothing here imports an environment. The daemon looks up the compositor's
+sockets in `XDG_RUNTIME_DIR` whenever it types, so it does not need
+`systemctl --user import-environment`, and restarting the compositor
+mid-session does not strand it on a socket name nobody holds.
+
+### No systemd at all
+
+`diktat daemon` from whatever the session runs, `.xinitrc` or the window
+manager's own autostart. Use the equivalent of `exec` rather than
+`exec_always`, since a reload that runs it twice leaves two daemons behind.
+
+### Checking on it
+
+    $ diktat version           # the build, and whether the daemon matches it
+    $ systemctl --user status diktat
+
+The daemon logs to stderr, so under systemd the log is the journal:
+
+    $ journalctl --user -u diktat -f
+
+Note `--user`. This is a user unit, and a system-level `journalctl -u diktat`
+matches nothing at all, which reads exactly like a daemon that never logged.
+
 ## How it works
 
 One binary, one subcommand per job. `diktat` with no arguments lists them.

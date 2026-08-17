@@ -2,55 +2,70 @@
 package ipc
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/christian-oudard/diktat/internal/xdg"
 )
 
-// These say what diktat is doing, not what was said, so /tmp is the right
-// place for them: the status file is read by the bar, which is another
-// program under another config, and the rest are a rendezvous rather than
-// content. The log records lengths and timings and deliberately never the
-// text.
-const (
-	PIDFile    = "/tmp/diktat-daemon.pid"
-	StatusFile = "/tmp/diktat-status"
-	LogFile    = "/tmp/diktat-daemon.log"
+// None of these are in /tmp any more. Fixed names in a shared directory meant
+// a second user on the machine had nothing to write to, since the name was
+// taken by a file they did not own, and mode 0644 published what diktat was
+// doing to everything else running.
+//
+// The log is not among them either. It goes to stderr, which is the journal
+// when systemd starts the daemon, and the terminal when a person does.
 
-	// The model directory the daemon currently has loaded. The daemon writes
-	// it; diktat-model reads it to report and rewrites it to switch.
-	ModelFile = "/tmp/diktat-model"
-)
+// PIDPath holds the daemon's PID, written at startup and removed at exit.
+// `diktat toggle` reads it to know where to send its signal.
+func PIDPath() (string, error) { return sessionFile("daemon.pid") }
+
+// ModelPath holds the model directory the daemon currently has loaded. The
+// daemon writes it; `diktat model` reads it to report and rewrites it to ask
+// for a switch.
+func ModelPath() (string, error) { return sessionFile("model") }
 
 // LastText is the last transcription, kept so `diktat repeat` can type it
 // again.
 //
-// It holds what was actually said, so it does not live in /tmp, where mode
-// 0644 puts every dictated sentence within reach of anything else on the
-// machine. XDG_RUNTIME_DIR is per-user and mode 0700.
+// It holds what was actually said, which is the reason this directory is mode
+// 0700 rather than somewhere every process on the machine can read.
 //
 // The capture itself is not kept. Writing a recording of someone's voice on
 // every dictation earns its keep only if the recording gets replayed, and
 // nothing here replays it: cmd/transcribe takes files someone chose to make.
 func LastText() (string, error) { return sessionFile("last") }
 
-// sessionFile names a file in the per-user runtime directory, creating it.
+// StatusPath holds a Pango markup string saying what the daemon is doing.
 //
-// An unset XDG_RUNTIME_DIR is an error rather than a fallback to /tmp: this
-// is a Wayland dictation tool, the compositor's own socket lives in that
-// directory, and wtype would have nothing to type into without it. Falling
-// back would mean quietly writing the private files to the public place in
-// the one case the variable is missing.
-func sessionFile(name string) (string, error) {
-	base := os.Getenv("XDG_RUNTIME_DIR")
-	if base == "" {
-		return "", errors.New("XDG_RUNTIME_DIR is not set")
+// It is the one file here another program reads, so it is the one with a path
+// a person has to be able to type into a bar's config. That rules out the
+// runtime directory, which is /run/user/<uid> and cannot be written as ~, and
+// it is why this sits with the state a session outlives rather than with the
+// rendezvous files below. The cost is that a daemon killed outright leaves the
+// last thing it was doing on screen, where a runtime file would have gone at
+// logout; the next start overwrites it.
+func StatusPath() (string, error) {
+	dir := xdg.StateDir()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", err
 	}
-	dir := filepath.Join(base, "diktat")
+	return filepath.Join(dir, "status"), nil
+}
+
+// sessionFile names a file in the per-user runtime directory, creating it.
+// What lives there is exactly as long-lived as the session: logind empties it
+// when the user's last one ends, so a daemon that died without cleaning up
+// leaves nothing for the next session to read as live.
+func sessionFile(name string) (string, error) {
+	dir, err := xdg.RuntimeDir()
+	if err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", err
 	}
@@ -59,7 +74,11 @@ func sessionFile(name string) (string, error) {
 
 // ReadPID returns the live daemon's PID, or 0 if there is none.
 func ReadPID() int {
-	return readPID(PIDFile)
+	path, err := PIDPath()
+	if err != nil {
+		return 0
+	}
+	return readPID(path)
 }
 
 func readPID(path string) int {

@@ -45,20 +45,12 @@ func TestSelectedAfterDeletion(t *testing.T) {
 	}
 }
 
-// XDG_STATE_HOME is the tier for "state that persists between restarts", and
-// is what the spec says to honour before falling back to ~/.local/state.
-func TestStateDirHonoursXDG(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", "/somewhere/state")
-	if got, want := StateDir(), "/somewhere/state/diktat"; got != want {
-		t.Errorf("StateDir() = %q, want %q", got, want)
-	}
+// The state directory is never the config directory: config.toml is the
+// user's to write, and nothing here rewrites it. Where each one lands is
+// internal/xdg's business; that they differ is this package's.
+func TestStateIsNotKeptWithConfig(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", "")
-	if got := StateDir(); filepath.Base(got) != "diktat" ||
-		filepath.Base(filepath.Dir(got)) != "state" {
-		t.Errorf("StateDir() = %q, want a .local/state/diktat path", got)
-	}
-	// Never the config directory: that file is the user's to write.
-	if StateDir() == filepath.Dir(DefaultPath()) {
+	if filepath.Dir(selectedPath()) == filepath.Dir(DefaultPath()) {
 		t.Error("state is being kept in the config directory")
 	}
 }

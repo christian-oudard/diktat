@@ -75,6 +75,10 @@ engine that is fastest at the current favourite.
   buckets, and what each one cost. Shared by the daemon and the offline tool
   because warming is not only about latency; it is also what tells a model how
   much audio it can take in one graph.
+- `internal/xdg` - the two base directories, so that `config` and `ipc` do not
+  each have their own idea of where state goes. A leaf: `ipc` asking `config`
+  for a path put the model downloader, and so the http stack, behind every
+  build of a package that names four files.
 - `internal/` - shared packages: asr, audio, config, human, output. `human`
   renders sizes in binary units at one precision rule, since the menu, the
   download progress and the daemon's memory lines all print the same kind of
@@ -91,6 +95,25 @@ cache by `diktat model <name>`, which asks before fetching.
 
 External CLIs expected on PATH: `wtype`, `wl-copy`, `wl-paste`, `swaymsg`,
 `espeak-ng` (the warmup rehearses on synthesised speech).
+
+All four Wayland ones need `WAYLAND_DISPLAY` and `SWAYSOCK`, and the daemon
+runs as a systemd user service wanted by `default.target`, so it starts before
+any compositor and inherits neither. `internal/output/env.go` finds them in
+`XDG_RUNTIME_DIR` when a child is spawned: the live `sway-ipc.<uid>.<pid>.sock`
+gives SWAYSOCK, and `WAYLAND_DISPLAY` is read out of that compositor's
+`/proc/<pid>/environ`, rather than guessed from the `wayland-N` names sitting
+beside it, which a greeter or a nested session also leaves behind. An
+inherited value always wins, which is the case for anything a keybinding runs.
+
+The alternative was `systemctl --user import-environment` in the compositor
+config, which is the documented way and has two costs this does not: it makes
+the compositor responsible for starting the daemon, and it copies the values
+once, so a compositor restart leaves the daemon typing at a socket nobody
+holds, since SWAYSOCK names sway's PID. Looking up per child costs a glob and
+a small read on a path that already spawns three processes.
+
+Two live compositors for one user is an error rather than a pick. Either
+socket is plausible and the wrong one puts a dictation on the wrong screen.
 
 ## GPU
 
@@ -241,22 +264,39 @@ already holds, which on this laptop is 1.4 GB of the 8.
 
 ## IPC files
 
-Split by what they hold rather than by who writes them. In `/tmp`, which is
-world-readable, are the files that say what diktat is doing:
+Split by lifetime. In `$XDG_RUNTIME_DIR/diktat/`, which is per-user, mode
+0700 and emptied by logind when the user's last session ends, are the files
+that describe the session:
 
-- `diktat-daemon.pid` - daemon PID
-- `diktat-status` - Pango markup status string, read by the bar
-- `diktat-model` - model file currently loaded
-- `diktat-daemon.log` - log; records lengths and timings, never the text
-
-In `$XDG_RUNTIME_DIR/diktat/`, which is per-user and mode 0700, is the file
-that holds what was actually said:
-
-- `last` - last transcribed text
+- `daemon.pid` - daemon PID, so `toggle` knows where to send its signal
+- `model` - model directory currently loaded; a request on the way in and a
+  statement of fact on the way out
+- `last` - last transcribed text, which is what makes `repeat` possible
 
 An unset `XDG_RUNTIME_DIR` is an error rather than a fallback to `/tmp`: the
-only fallback available is the place that file exists to stay out of, and
-a Wayland session always sets it, since the compositor's socket lives there.
+only fallback available is the place these exist to stay out of, and a
+Wayland session always sets it, since the compositor's socket lives there.
+
+In `$XDG_STATE_HOME/diktat/`, alongside the remembered model choice, is the
+one file another program reads:
+
+- `status` - Pango markup string saying what the daemon is doing, read by the
+  bar
+
+It is there rather than with the others because a bar's config has to name
+the path, and `/run/user/<uid>` cannot be written as `~`; i3status resolves a
+tilde, not a uid. The cost is that a daemon killed outright leaves its last
+status on screen, where a runtime file would have gone at logout. The next
+start overwrites it.
+
+All three used to be `/tmp/diktat-*` under fixed names. Two users on one
+machine could not both run a daemon, since the second one's write landed on a
+file it did not own, and mode 0644 published what diktat was doing to
+everything else running.
+
+The log is not among these at all. It goes to stderr, which is the journal
+when systemd runs the daemon and the terminal when a person does, and it
+records lengths and timings, never the text.
 
 ## Build
 

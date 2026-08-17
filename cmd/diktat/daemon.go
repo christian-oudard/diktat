@@ -62,27 +62,45 @@ func runDaemon(args []string) {
 		log.Fatalf("%s is not downloaded. Get it with:\n  diktat model %s", name, name)
 	}
 
-	if logf, err := os.OpenFile(ipc.LogFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644); err == nil {
-		log.SetOutput(logf)
-	}
-	log.SetFlags(log.Ltime)
+	// Logging is stderr and nothing else: under systemd that is the journal,
+	// which timestamps every line itself, keeps them across restarts and can
+	// be followed while the daemon is running. A file of our own was one more
+	// thing to find, and it was truncated at every start, so the log of the
+	// crash was gone by the time anyone looked.
+	log.SetFlags(0)
 	log.Printf("Starting %s %s", gitRev, exePath())
 
-	if err := os.WriteFile(ipc.PIDFile, []byte(fmt.Sprint(os.Getpid())), 0644); err != nil {
+	// Resolved once, here, because a daemon that cannot name these files
+	// cannot do its job either, and every use below would otherwise repeat
+	// the same fatal.
+	pidPath, err := ipc.PIDPath()
+	if err != nil {
+		log.Fatal(err)
+	}
+	statusPath, err = ipc.StatusPath()
+	if err != nil {
+		log.Fatal(err)
+	}
+	modelPath, err = ipc.ModelPath()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if err := os.WriteFile(pidPath, []byte(fmt.Sprint(os.Getpid())), 0644); err != nil {
 		log.Fatalf("write pid: %v", err)
 	}
-	defer os.Remove(ipc.PIDFile)
-	defer os.Remove(ipc.StatusFile)
+	defer os.Remove(pidPath)
+	defer os.Remove(statusPath)
 	setStatus(statusLoad)
 
-	// A `diktat model` switch deliberately does not persist: the daemon comes
-	// back on the configured model rather than on whatever a stale /tmp file
-	// says.
+	// What to start on comes from config.StartModel, never from the model file
+	// above: that file says what a daemon has loaded, and a daemon starting
+	// has loaded nothing.
 	model, err := asr.Load(modelDir)
 	if err != nil {
 		log.Fatalf("load model: %v", err)
 	}
-	defer os.Remove(ipc.ModelFile)
+	defer os.Remove(modelPath)
 
 	rec, err := audio.NewRecorder()
 	if err != nil {
@@ -172,18 +190,18 @@ type loadResult struct {
 }
 
 func (d *daemon) publishModel() {
-	if err := os.WriteFile(ipc.ModelFile, []byte(d.modelDir), 0644); err != nil {
+	if err := os.WriteFile(modelPath, []byte(d.modelDir), 0644); err != nil {
 		log.Printf("model publish: %v", err)
 	}
 }
 
-// requestModel acts on the model named in ipc.ModelFile. That file is a
+// requestModel acts on the model named in the model file. That file is a
 // request on the way in and a statement of fact on the way out, so it is put
 // back to the model actually loaded straight away: a switch is not a switch
 // until the new model can transcribe, and a 2 GB model takes tens of seconds
 // to get there.
 func (d *daemon) requestModel() {
-	raw, err := os.ReadFile(ipc.ModelFile)
+	raw, err := os.ReadFile(modelPath)
 	if err != nil {
 		log.Printf("model request: %v", err)
 		return
@@ -584,6 +602,11 @@ func (d *daemon) appendHistory(text string) {
 	})
 }
 
+// statusPath and modelPath are resolved at startup and used from every corner
+// of the daemon, including the signal handlers, which have no daemon value to
+// hang them off.
+var statusPath, modelPath string
+
 func setStatus(s string) {
-	_ = os.WriteFile(ipc.StatusFile, []byte(s), 0644)
+	_ = os.WriteFile(statusPath, []byte(s), 0644)
 }
