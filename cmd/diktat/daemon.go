@@ -31,6 +31,12 @@ const (
 	statusTx   = `<span color="#458588">● TX</span>`
 )
 
+// exitConfig is EX_CONFIG from sysexits.h, for a config only a person can
+// fix. The unit gives it to RestartPreventExitStatus, so the daemon stops
+// once and says why, rather than restarting every two seconds until the start
+// limit stops it anyway and the reason is twenty entries up the journal.
+const exitConfig = 78
+
 func runDaemon(args []string) {
 	if len(args) > 0 {
 		log.Fatalf("daemon takes no arguments; set model in %s", config.DefaultPath())
@@ -42,12 +48,14 @@ func runDaemon(args []string) {
 	sigCh := make(chan os.Signal, 8)
 	signal.Notify(sigCh, syscall.SIGUSR1, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGINT)
 
-	// Pre-flight before the log is redirected to a file, so a user who runs
-	// this in a terminal sees why it would not start.
+	// A config that does not parse stops the daemon. Carrying on with an
+	// empty Config was worse than it sounds: the settings that go missing are
+	// the ones someone bothered to write, and nothing about dictation looks
+	// broken afterwards, it just quietly does the default thing.
 	cfg, unknown, err := config.Load(config.DefaultPath())
 	if err != nil {
-		log.Printf("config: %v (continuing with defaults)", err)
-		cfg = &config.Config{}
+		log.Printf("config: %v", err)
+		os.Exit(exitConfig)
 	}
 	for _, key := range unknown {
 		// Silence here is how a key that had stopped meaning anything sat

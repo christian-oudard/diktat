@@ -125,6 +125,9 @@
             # is what gets the new build restarted at activation.
             Restart = "on-failure";
             RestartSec = 2;
+            # EX_CONFIG. A config file only a person can fix, so restarting
+            # would just bury the reason in the journal.
+            RestartPreventExitStatus = 78;
           };
         };
       };

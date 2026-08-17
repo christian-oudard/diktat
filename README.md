@@ -57,6 +57,7 @@ daemon on the new build during activation.
     ExecStart=%h/.local/bin/diktat daemon
     Restart=on-failure
     RestartSec=2
+    RestartPreventExitStatus=78
 
     [Install]
     WantedBy=graphical-session.target
@@ -106,6 +107,11 @@ manager's own autostart. Use the equivalent of `exec` rather than
 The daemon logs to stderr, so under systemd the log is the journal:
 
     $ journalctl --user -u diktat -f
+
+A config file that does not parse stops the daemon rather than starting it on
+defaults, with the reason on the last line and exit status 78 (EX_CONFIG).
+The unit does not restart on that status, so the message stays where it can be
+read; fix the file and `systemctl --user start diktat`.
 
 Note `--user`. This is a user unit, and a system-level `journalctl -u diktat`
 matches nothing at all, which reads exactly like a daemon that never logged.

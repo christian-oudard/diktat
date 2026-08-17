@@ -26,7 +26,7 @@ func runRepeat(args []string) {
 	// the paste methods.
 	cfg, _, err := config.Load(config.DefaultPath())
 	if err != nil {
-		cfg = &config.Config{}
+		log.Fatalf("config: %v", err)
 	}
 	if err := output.Type(string(raw), cfg.PasteMethods); err != nil {
 		log.Fatalf("type: %v", err)
