@@ -20,33 +20,45 @@ var pasteWtypeArgs = map[string][]string{
 // app_id has an entry in pasteMethods, the clipboard paste flow is used;
 // otherwise wtype types the text directly.
 func Type(text string, pasteMethods map[string]string) error {
-	appID, _ := focusedAppID()
+	env, err := waylandEnv()
+	if err != nil {
+		return err
+	}
+	appID, _ := focusedAppID(env)
 	method, ok := pasteMethods[appID]
 	if ok {
 		args, known := pasteWtypeArgs[method]
 		if !known {
 			return fmt.Errorf("unknown paste method %q for app_id %q", method, appID)
 		}
-		return paste(text, args)
+		return paste(env, text, args)
 	}
-	return exec.Command("wtype", "--", text).Run()
+	return command(env, "wtype", "--", text).Run()
+}
+
+// command is exec.Command with the compositor's environment, which every
+// program spawned here needs and none of them can be given by systemd.
+func command(env []string, name string, args ...string) *exec.Cmd {
+	cmd := exec.Command(name, args...)
+	cmd.Env = env
+	return cmd
 }
 
 // paste saves the clipboard, sets it to text, sends the paste chord, restores.
-func paste(text string, chord []string) error {
-	saved, _ := exec.Command("wl-paste", "--no-newline").Output()
-	if err := exec.Command("wl-copy", "--", text).Run(); err != nil {
+func paste(env []string, text string, chord []string) error {
+	saved, _ := command(env, "wl-paste", "--no-newline").Output()
+	if err := command(env, "wl-copy", "--", text).Run(); err != nil {
 		return fmt.Errorf("wl-copy: %w", err)
 	}
-	_ = exec.Command("wtype", chord...).Run()
-	restore := exec.Command("wl-copy", "--")
+	_ = command(env, "wtype", chord...).Run()
+	restore := command(env, "wl-copy", "--")
 	restore.Stdin = bytes.NewReader(saved)
 	return restore.Run()
 }
 
 // focusedAppID returns the sway app_id of the focused window.
-func focusedAppID() (string, error) {
-	out, err := exec.Command("swaymsg", "-t", "get_tree").Output()
+func focusedAppID(env []string) (string, error) {
+	out, err := command(env, "swaymsg", "-t", "get_tree").Output()
 	if err != nil {
 		return "", err
 	}

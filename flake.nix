@@ -94,6 +94,41 @@
         '';
       };
 
+      # The daemon as a home-manager service, since a session-long process with
+      # a store path in it is not something to hand-write per machine. Nothing
+      # about the unit is host-specific: the daemon finds the compositor
+      # itself, so it neither waits for a session nor takes anything from one,
+      # and the compositor config is left holding only its keybindings.
+      homeManagerModules.default = {
+        home.packages = [ self.packages.${system}.default ];
+
+        systemd.user.services.diktat = {
+          Unit = {
+            Description = "diktat dictation daemon";
+            # The daemon types into a graphical session and holds a model for
+            # as long as one lasts, so its lifetime is the session's: PartOf
+            # stops it when the session goes. Not default.target, which the
+            # user manager reaches on any login, including one over ssh, where
+            # this would load a model and wait for a compositor that is never
+            # coming.
+            PartOf = [ "graphical-session.target" ];
+          };
+          # Every session a display manager starts reaches this target, on X11
+          # and on Wayland alike, so this one line covers GNOME, KDE and the
+          # rest. A compositor started from a tty does not reach it, and starts
+          # the service by name instead; see the README.
+          Install.WantedBy = [ "graphical-session.target" ];
+          Service = {
+            ExecStart = "${self.packages.${system}.default}/bin/diktat daemon";
+            # It never exits on its own, so an exit is a failure. The store
+            # path in ExecStart makes an upgrade a change to this unit, which
+            # is what gets the new build restarted at activation.
+            Restart = "on-failure";
+            RestartSec = 2;
+          };
+        };
+      };
+
       # `go run`/`go build`/`go test` with the same runtime env the wrapper
       # sets, so the binaries work without going through `nix build`.
       devShells.${system}.default = pkgs.mkShell {
