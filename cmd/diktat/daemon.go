@@ -3,7 +3,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -127,7 +129,7 @@ func runDaemon(args []string) {
 		loaded:   make(chan loadResult, 1),
 	}
 	defer d.closeModels()
-	warm(model)
+	warm(context.Background(), model)
 	d.publishModel()
 	log.Printf("Model loaded: %s", model.Arch())
 	setStatus("")
@@ -173,10 +175,12 @@ type daemon struct {
 	modelDir  string
 
 	// loaded carries a model loaded off the main loop back to it, since that
-	// loop owns every field here. loading is what is being loaded now, and
-	// wanted is a model asked for while that was still in flight.
+	// loop owns every field here. loading is what is being loaded now, cancel
+	// stops it, and wanted is a model asked for while that was still in
+	// flight, which is also what says the load has been cancelled.
 	loaded  chan loadResult
 	loading string
+	cancel  context.CancelFunc
 	wanted  string
 
 	// waking is closed when the run that woke the GPU at the start of a
@@ -219,8 +223,54 @@ func (d *daemon) requestModel() {
 	d.switchTo(dir)
 }
 
-// switchTo installs a model that is already resident, or starts fetching one
-// that is not. The fetch runs off the main loop, because the daemon's whole
+// step is what a switch request does about the model asked for.
+type step int
+
+const (
+	stepNothing step = iota // it is the model in use
+	stepInstall             // resident already, so swap to it now
+	stepWait                // it is the model already being loaded
+	stepCancel              // something else is loading: stop that and take this
+	stepLoad                // load it in the background
+)
+
+func (s step) String() string {
+	return [...]string{"nothing", "install", "wait", "cancel", "load"}[s]
+}
+
+// plan decides which of those a request for req is, given the model in use,
+// whether req is resident, what is being loaded, and whether that load has
+// already been cancelled in favour of something else.
+//
+// A newer request cancels the load in flight rather than queueing behind it.
+// Queueing meant that asking for a third model while a 2 GB second one was
+// loading waited out the whole of a load nobody wanted any more, warmup
+// included, before the wanted one started.
+//
+// Split from switchTo so the ordering can be tested without a card: the
+// resident and already-loading cases have to come before the cancel, or a
+// switch back to the model in use would kill a load it has no quarrel with.
+func plan(req, inUse, loading string, resident, cancelled bool) step {
+	switch {
+	case req == inUse:
+		return stepNothing
+	case resident:
+		return stepInstall
+	// Asking twice for the model already on its way. Worth its own case: the
+	// published file names the model still in use, so a second ask looks new,
+	// and cancelling it would throw away the load it asked for. Unless that
+	// load is already cancelled, in which case the ask is for a model nothing
+	// is going to produce, and it has to start again.
+	case req == loading && !cancelled:
+		return stepWait
+	case loading != "":
+		return stepCancel
+	}
+	return stepLoad
+}
+
+// switchTo installs a model that is already resident, or starts loading one
+// that is not. The load runs off the main loop, because the daemon's whole
 // job is to answer a keypress: waiting for a load here would mean pressing to
 // talk and getting nothing until it finished. The old model keeps serving in
 // the meantime, and the loaded model arrives back on d.loaded, which is read
@@ -231,58 +281,87 @@ func (d *daemon) requestModel() {
 // model's size from the device's free memory either side of it, which a
 // concurrent transcription inflates. Both are worth a responsive keypress.
 func (d *daemon) switchTo(dir string) {
-	if dir == d.modelDir {
+	model, resident := d.models[dir]
+	// A load whose cancel is spent is one that is still winding down, and it
+	// is not going to produce anything.
+	cancelled := d.loading != "" && d.cancel == nil
+	switch plan(dir, d.modelDir, d.loading, resident, cancelled) {
+	case stepNothing:
 		log.Printf("Already using %s", dir)
-		return
-	}
-	if model, ok := d.models[dir]; ok {
+		d.dropLoad("")
+	case stepInstall:
 		d.install(dir, model)
 		log.Printf("Model now %s, already resident", model.Arch())
-		return
-	}
-	if dir == d.loading {
-		// Asking twice for the model already on its way. Worth its own case:
-		// the published file names the model still in use, so a second ask
-		// looks new, and queueing it would load nothing and then switch to
-		// what had just been switched to.
+		d.dropLoad("")
+	case stepWait:
 		log.Printf("Already loading %s", dir)
+	case stepCancel:
+		// One load at a time: two at once would compete for the same card.
+		// The load gives up at its next warmup bucket and drops what it had,
+		// and finishLoad starts this one when it reports back.
+		d.dropLoad(dir)
+	case stepLoad:
+		ctx, cancel := context.WithCancel(context.Background())
+		d.loading, d.cancel = dir, cancel
+		d.restoreStatus()
+		log.Printf("Loading %s in the background", dir)
+		go func() {
+			t0 := time.Now()
+			model, err := asr.Load(dir)
+			if err == nil {
+				// Reading a couple of gigabytes off disk and warming it are
+				// separate costs with separate causes, and a switch that is
+				// taking too long is a question about which one. Warmed says
+				// what the buckets cost; this says what came before it.
+				log.Printf("Loaded %s in %s, warming", model.Name(),
+					time.Since(t0).Round(time.Millisecond))
+				if err = warm(ctx, model); err != nil {
+					// Cancelled. A half-warmed model is not worth keeping:
+					// it would meet an unrehearsed shape on the first thing
+					// said to it, and it holds the card's memory meanwhile.
+					model.Close()
+					model = nil
+				}
+			}
+			d.loaded <- loadResult{dir: dir, model: model, err: err, took: time.Since(t0)}
+		}()
+	}
+}
+
+// dropLoad stops the load in flight and records what to load instead, or ""
+// for nothing. Every path through switchTo ends up here, because a switch
+// answers the most recent request and the card should not still be loading a
+// model nobody is waiting for. Even the two that need no load of their own:
+// letting one run on would take the model the user just chose back off them
+// tens of seconds later.
+//
+// Spending the cancel is what says the load is already dying, so a later
+// request for the same model knows to ask again rather than wait for
+// something nothing is going to produce.
+func (d *daemon) dropLoad(next string) {
+	if d.loading == "" {
 		return
 	}
-	if d.loading != "" {
-		// One load at a time: two at once would compete for the same card,
-		// and the second ask is the one that will be honoured anyway.
-		d.wanted = dir
-		log.Printf("Queued %s behind the load in flight", dir)
-		return
+	if d.cancel != nil {
+		log.Printf("Cancelling the load of %s", d.loading)
+		d.cancel()
+		d.cancel = nil
 	}
-	d.loading = dir
-	d.restoreStatus()
-	log.Printf("Loading %s in the background", dir)
-	go func() {
-		t0 := time.Now()
-		model, err := asr.Load(dir)
-		if err == nil {
-			// Reading a couple of gigabytes off disk and warming it are
-			// separate costs with separate causes, and a switch that is
-			// taking too long is a question about which one. Warmed says
-			// what the buckets cost; this says what came before it.
-			log.Printf("Loaded %s in %s, warming", model.Name(),
-				time.Since(t0).Round(time.Millisecond))
-			warm(model)
-		}
-		d.loaded <- loadResult{dir: dir, model: model, err: err, took: time.Since(t0)}
-	}()
+	d.wanted = next
 }
 
 // finishLoad installs what the background load produced, and then honours a
 // switch asked for while it was running.
 func (d *daemon) finishLoad(res loadResult) {
-	d.loading = ""
-	if res.err != nil {
+	d.loading, d.cancel = "", nil
+	switch {
+	case errors.Is(res.err, context.Canceled):
+		log.Printf("Gave up on %s after %s", res.dir, res.took.Round(time.Millisecond))
+	case res.err != nil:
 		// Keep serving with the model we have. The published model still
 		// names it, since a request never overwrote it.
 		log.Printf("model load %s: %v", res.dir, res.err)
-	} else {
+	default:
 		d.models[res.dir] = res.model
 		d.install(res.dir, res.model)
 		log.Printf("Model now %s in %s, %d resident, %s cached",
@@ -390,14 +469,20 @@ func cacheBudget(cfg *config.Config) uint64 {
 // rather than on the first thing the user says. The cost is one throwaway
 // transcription per bucket, a few hundred milliseconds in total once the
 // driver has the shaders on disk, and it runs off the main loop either way.
-func warm(m *asr.Model) {
+// A cancelled warmup is the caller's business rather than a line in the log,
+// so it comes back as an error; anything else is reported here and left to
+// the model that survived it.
+func warm(ctx context.Context, m *asr.Model) error {
 	t0 := time.Now()
-	work, err := warmup.Run(m)
+	work, err := warmup.Run(ctx, m)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err != nil {
 		log.Printf("warmup: %v", err)
 	}
 	if work == "" {
-		return
+		return nil
 	}
 	// Loading allocated the weights; those runs allocated the buffers, which
 	// are the larger half and grow with the largest bucket. Now is when the
@@ -409,6 +494,7 @@ func warm(m *asr.Model) {
 		m.AudioLimit().Round(time.Second),
 		t.Mel.Round(time.Millisecond), t.Encode.Round(time.Millisecond),
 		t.Decode.Round(time.Millisecond), t.Other.Round(time.Millisecond))
+	return nil
 }
 
 func (d *daemon) closeModels() {

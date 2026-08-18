@@ -13,6 +13,7 @@
 package warmup
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -35,9 +36,16 @@ import (
 //
 // There is nothing to warm on the CPU: with no shaders to compile, seven warm
 // strategies measured identically to no warmup at all.
-func Run(m *asr.Model) (string, error) {
+//
+// Cancelling ctx gives up at the next bucket, and says so with ctx.Err(). The
+// caller then has a model that is loaded and only partly rehearsed, which is
+// worth less than nothing to keep: it would meet an unrehearsed shape on the
+// first thing said to it. Bucket boundaries are as fine as this gets, since
+// the library cannot abort a run inside its encoder, and the encoder is where
+// a bucket spends its time.
+func Run(ctx context.Context, m *asr.Model) (string, error) {
 	if !m.OnGPU() {
-		return "", nil
+		return "", ctx.Err()
 	}
 	speech, err := Speech()
 	if err != nil {
@@ -47,6 +55,9 @@ func Run(m *asr.Model) (string, error) {
 	work := make([]string, 0, len(buckets))
 	before := m.CompiledKernels()
 	for _, secs := range buckets {
+		if err := ctx.Err(); err != nil {
+			return strings.Join(work, " "), err
+		}
 		started := time.Now()
 		// A truncated warmup is a success: the graph ran, which is the entire
 		// point, and the transcript is thrown away either way. An audio-LLM

@@ -256,6 +256,16 @@ what it was at load. A backend reporting no memory falls back to the file size.
 model in use, so too small a budget degrades to keeping exactly one model
 rather than to keeping none.
 
+A model that is not resident is loaded off the main loop, so a keypress is
+still answered while it happens, and the old model keeps serving until the new
+one can transcribe. Only one load runs at a time: a second ask cancels the
+first rather than queueing behind it, since the newer request is the one to be
+honoured and waiting out a 2 GB load nobody wants any more, warmup included,
+is tens of seconds of nothing. The cancelled load's model is dropped rather
+than kept half-warmed. `asr.Load` itself cannot be interrupted, so the
+cancellation lands at the next warmup bucket; the library cannot abort a run
+inside its encoder either, which is where a bucket spends its time.
+
 The default budget is two thirds of what the device had **free** at startup,
 not of its total. The remaining third has to cover the compute buffers of
 whichever model is in use, and those grow with the length of the dictation;

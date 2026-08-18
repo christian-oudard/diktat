@@ -13,6 +13,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -49,7 +50,7 @@ func main() {
 	// can take in one graph and falls back to a 30 second floor, and cutting
 	// a clip there changes what comes back: on this passage it cost
 	// canary-180m-flash 19 points of word error rate and saved parakeet 4.
-	if _, err := warmup.Run(model); err != nil {
+	if _, err := warmup.Run(context.Background(), model); err != nil {
 		log.Printf("warmup: %v", err)
 	}
 	// The limit is part of what a model is, not a detail: it says how much of
