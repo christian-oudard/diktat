@@ -24,28 +24,25 @@ func TestPlan(t *testing.T) {
 		name      string
 		req       string
 		loading   string
-		resident  bool
 		cancelled bool
 		want      step
 	}{
 		{name: "the model in use", req: inUse, want: stepNothing},
-		{name: "resident already", req: other, resident: true, want: stepInstall},
-		{name: "not resident", req: other, want: stepLoad},
+		{name: "another model", req: other, want: stepLoad},
 		// The model file names the model still in use while a load is in
 		// flight, so a second ask for the model being loaded looks new.
 		{name: "asked for twice", req: loading, loading: loading, want: stepWait},
 		{name: "a third model", req: other, loading: loading, want: stepCancel},
-		// Ordering: neither of these has anything against the load in flight,
-		// so neither may be answered by cancelling and reloading.
+		// Ordering: this one has nothing against the load in flight, so it
+		// may not be answered by cancelling and reloading.
 		{name: "back to the model in use", req: inUse, loading: loading, want: stepNothing},
-		{name: "back to a resident one", req: other, loading: loading, resident: true, want: stepInstall},
 		// Once cancelled, that load will produce nothing, so asking for it
 		// again has to start it over rather than wait for it.
 		{name: "asked for again after cancelling",
 			req: loading, loading: loading, cancelled: true, want: stepCancel},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			got := plan(c.req, inUse, c.loading, c.resident, c.cancelled)
+			got := plan(c.req, inUse, c.loading, c.cancelled)
 			if got != c.want {
 				t.Errorf("plan(%s) = %v, want %v", c.req, got, c.want)
 			}

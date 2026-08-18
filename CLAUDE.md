@@ -270,36 +270,34 @@ cost canary-180m-flash 19 points of word error rate and saved parakeet 4, so a
 benchmark run without warming is not measuring the daemon's pipeline. That is
 why `internal/warmup` is shared rather than living in the daemon.
 
-## Model cache
+## One model resident
 
-Every model loaded stays resident, so switching back is instant. That needs a
-ceiling now the models are large: the laptop GPU has 8 GB shared with the
-desktop, and ggml's context and compute buffers cost more than the weights do
-for a small model, so nvidia-smi shows ~1.4 GB resident for a 44 MB file.
+The model in use is the only one held, and the one it replaces is closed as
+soon as the new one can transcribe. Nothing is cached against a switch back.
 
-`asr.Load` measures the weights and context by reading the device's free memory
-either side of the load; the compute buffers are added as transcriptions grow
-them, by the same accounting as above, so a model's cost is current rather than
-what it was at load. A backend reporting no memory falls back to the file size.
-`overBudget` in `daemon.go` picks what to drop, oldest first, and never the
-model in use, so too small a budget degrades to keeping exactly one model
-rather than to keeping none.
+It was a cache once, with an LRU and a budget, because a reload is seconds and
+a switch back was instant without one. What that bought stopped being worth
+its price when the menu grew: canary-qwen-2.5b holds 3.4 GiB, of which 1.5 GiB
+is compute buffers, and a laptop card has 8 GB shared with the desktop.
+Holding that for a model nobody is using is worse than reloading it, and
+neither ggml nor the driver hands it back on its own, so the memory stays gone
+until the daemon lets go of it. Reloading also costs less than it used to:
+the load happens off the main loop and the rehearsal happens after it, so a
+switch is a few seconds of the old model still serving.
 
-A model that is not resident is loaded off the main loop, so a keypress is
-still answered while it happens, and the old model keeps serving until the new
-one can transcribe. Only one load runs at a time: a second ask cancels the
-first rather than queueing behind it, since the newer request is the one to be
-honoured and waiting out a 2 GB load nobody wants any more, warmup included,
-is tens of seconds of nothing. The cancelled load's model is dropped rather
-than kept half-warmed. `asr.Load` itself cannot be interrupted, so the
-cancellation lands at the next warmup bucket; the library cannot abort a run
-inside its encoder either, which is where a bucket spends its time.
+That load runs off the main loop, so a keypress is still answered while it
+happens, and the old model keeps serving until the new one can transcribe.
+Only one load runs at a time: a second ask cancels the first rather than
+queueing behind it, since the newer request is the one to be honoured and
+waiting out a 2 GB load nobody wants any more is tens of seconds of nothing.
+`asr.Load` itself cannot be interrupted, so a cancellation lands when it
+returns and the model it produced is closed unopened.
 
-The default budget is two thirds of what the device had **free** at startup,
-not of its total. The remaining third has to cover the compute buffers of
-whichever model is in use, and those grow with the length of the dictation;
-struck against the total it would also be spending the memory the compositor
-already holds, which on this laptop is 1.4 GB of the 8.
+What a model costs is still measured rather than guessed, since the log says
+it and the audio limit is struck against it: `asr.Load` reads the device's
+free memory either side of the load for the weights and context, and the
+compute buffers are added as transcriptions grow them. A backend reporting no
+memory falls back to the file size.
 
 ## IPC files
 
@@ -365,8 +363,6 @@ itself on PATH, `nix profile add .`.
   $XDG_STATE_HOME/diktat/model instead of writing here, since this file is
   hand-authored; that choice outranks this key, and deleting it restores
   this one.
-- `model_cache_mb` - ceiling on what resident models hold together. 0 takes
-  two thirds of what the compute device had free at startup.
 - `paste_methods` - map of sway app_id to paste key combo (`C-v`, `C-S-v`)
 - `history_file` - JSONL append target for each transcription. A path, or
   `true` for `$XDG_STATE_HOME/diktat/history.jsonl`, or `false` for no

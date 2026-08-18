@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -127,17 +126,12 @@ func runDaemon(args []string) {
 	defer rec.Close()
 
 	d := &daemon{
-		model:      model,
-		models:     map[string]*asr.Model{modelDir: model},
-		budget:     cacheBudget(cfg),
-		recorder:   rec,
-		cfg:        cfg,
-		modelDir:   modelDir,
-		loaded:     make(chan loadResult, 1),
-		rehearsals: map[string]*rehearsal{},
-		rehearsed:  make(chan bucketResult, 1),
+		recorder:  rec,
+		cfg:       cfg,
+		loaded:    make(chan loadResult, 1),
+		rehearsed: make(chan bucketResult, 1),
 	}
-	defer d.closeModels()
+	defer d.closeModel()
 	defer os.Remove(activityPath)
 	// Ready here, not after the rehearsal: the model can transcribe as soon as
 	// it is loaded, and warming it is worth several seconds on a large one.
@@ -176,15 +170,11 @@ func runDaemon(args []string) {
 }
 
 type daemon struct {
-	model *asr.Model
-	// Every model loaded this session, kept resident so switching back to one
-	// already seen is instant.
-	models map[string]*asr.Model
-	// lru is the model cache's use order, oldest first, and budget is what
-	// the cache may hold. Together they bound resident memory, which on a
-	// laptop GPU is the scarce resource.
-	lru       []string
-	budget    uint64
+	// The one model resident, and where it was loaded from. One, because a
+	// model this size is most of a laptop card: they were kept so switching
+	// back was instant, and holding 3.4 GiB of a shared 8 for a model nobody
+	// is using costs more than a reload does.
+	model     *asr.Model
 	recorder  *audio.Recorder
 	cfg       *config.Config
 	startedAt time.Time
@@ -199,13 +189,10 @@ type daemon struct {
 	cancel  context.CancelFunc
 	wanted  string
 
-	// rehearsals is each resident model's warmup progress, kept per model so
-	// one switched away from halfway through picks up where it left off and
-	// one already warm is not rehearsed again. warming is the one being run
-	// now, and rehearsed carries each finished bucket back to the main loop.
-	rehearsals map[string]*rehearsal
-	warming    *rehearsal
-	rehearsed  chan bucketResult
+	// warming is the model in use rehearsing, one bucket at a time, and
+	// rehearsed carries each finished bucket back to the main loop.
+	warming   *rehearsal
+	rehearsed chan bucketResult
 
 	// busy is closed when the background run holding the model finishes,
 	// whether that is a warmup bucket or the run that wakes the GPU at the
@@ -283,34 +270,31 @@ type step int
 
 const (
 	stepNothing step = iota // it is the model in use
-	stepInstall             // resident already, so swap to it now
 	stepWait                // it is the model already being loaded
 	stepCancel              // something else is loading: stop that and take this
 	stepLoad                // load it in the background
 )
 
 func (s step) String() string {
-	return [...]string{"nothing", "install", "wait", "cancel", "load"}[s]
+	return [...]string{"nothing", "wait", "cancel", "load"}[s]
 }
 
 // plan decides which of those a request for req is, given the model in use,
-// whether req is resident, what is being loaded, and whether that load has
-// already been cancelled in favour of something else.
+// what is being loaded, and whether that load has already been cancelled in
+// favour of something else.
 //
 // A newer request cancels the load in flight rather than queueing behind it.
 // Queueing meant that asking for a third model while a 2 GB second one was
-// loading waited out the whole of a load nobody wanted any more, warmup
-// included, before the wanted one started.
+// loading waited out the whole of a load nobody wanted any more before the
+// wanted one started.
 //
 // Split from switchTo so the ordering can be tested without a card: the
-// resident and already-loading cases have to come before the cancel, or a
-// switch back to the model in use would kill a load it has no quarrel with.
-func plan(req, inUse, loading string, resident, cancelled bool) step {
+// already-in-use and already-loading cases have to come before the cancel, or
+// a switch back to the model in use would kill a load it has no quarrel with.
+func plan(req, inUse, loading string, cancelled bool) step {
 	switch {
 	case req == inUse:
 		return stepNothing
-	case resident:
-		return stepInstall
 	// Asking twice for the model already on its way. Worth its own case: the
 	// published file names the model still in use, so a second ask looks new,
 	// and cancelling it would throw away the load it asked for. Unless that
@@ -336,17 +320,12 @@ func plan(req, inUse, loading string, resident, cancelled bool) step {
 // model's size from the device's free memory either side of it, which a
 // concurrent transcription inflates. Both are worth a responsive keypress.
 func (d *daemon) switchTo(dir string) {
-	model, resident := d.models[dir]
 	// A load whose cancel is spent is one that is still winding down, and it
 	// is not going to produce anything.
 	cancelled := d.loading != "" && d.cancel == nil
-	switch plan(dir, d.modelDir, d.loading, resident, cancelled) {
+	switch plan(dir, d.modelDir, d.loading, cancelled) {
 	case stepNothing:
 		log.Printf("Already using %s", dir)
-		d.dropLoad("")
-	case stepInstall:
-		d.install(dir, model)
-		log.Printf("Model now %s, already resident", model.Arch())
 		d.dropLoad("")
 	case stepWait:
 		log.Printf("Already loading %s", dir)
@@ -409,11 +388,10 @@ func (d *daemon) finishLoad(res loadResult) {
 		// names it, since a request never overwrote it.
 		log.Printf("model load %s: %v", res.dir, res.err)
 	default:
-		d.models[res.dir] = res.model
 		d.install(res.dir, res.model)
-		log.Printf("Model now %s in %s, %d resident, %s cached",
+		log.Printf("Model now %s in %s, %s resident",
 			res.model.Arch(), res.took.Round(time.Millisecond),
-			len(d.models), human.Bytes(d.cached()))
+			human.Bytes(res.model.Bytes()))
 	}
 	// A request made during the load, unless it asked for what the load just
 	// installed, which is what asking twice for a slow model looks like.
@@ -434,38 +412,33 @@ func (d *daemon) finishLoad(res loadResult) {
 	d.restoreStatus()
 }
 
-// install makes a resident model the one in use. Recording is not
-// interrupted: the capture buffer is independent of the model, so a swap
-// while armed just means the new model transcribes what was captured.
+// install makes a freshly loaded model the one in use and frees the one it
+// replaces. Recording is not interrupted: the capture buffer is independent
+// of the model, so a swap while armed just means the new model transcribes
+// what was captured.
 func (d *daemon) install(dir string, model *asr.Model) {
-	// Whatever is rehearsing is rehearsing the model being replaced, and the
-	// eviction below has to wait for it to let go of the card.
+	// Whatever is rehearsing is rehearsing the model being replaced, and it
+	// cannot be closed until it lets go of the card.
 	d.pauseWarming()
+	d.settle()
+	if d.model != nil {
+		d.model.Close()
+	}
 	d.model, d.modelDir = model, dir
-	d.touch(dir)
-	d.evict()
 	d.publishModel()
 	d.startWarming(dir, model)
 	d.restoreStatus()
 }
 
-// startWarming takes up the rehearsal of the model now in use, from wherever
-// it got to. A model that has run every bucket needs nothing, which is what
-// makes switching back to a resident model free rather than a rehearsal all
-// over again.
+// startWarming begins the rehearsal of the model now in use. Nothing carries
+// over from the model before it: that one has been freed, and what it had run
+// went with it.
 func (d *daemon) startWarming(dir string, model *asr.Model) {
-	// The rehearsal being left keeps its place in the map, so switching back
-	// resumes it rather than starting it again.
-	d.warming = nil
-	w := d.rehearsals[dir]
-	if w == nil {
-		w = &rehearsal{model: model, dir: dir, buckets: warmup.Buckets(model)}
-		d.rehearsals[dir] = w
-	}
-	if w.next == len(w.buckets) {
+	d.warming = &rehearsal{model: model, dir: dir, buckets: warmup.Buckets(model)}
+	if len(d.warming.buckets) == 0 {
+		d.warming = nil
 		return
 	}
-	d.warming = w
 	d.warmNext()
 }
 
@@ -548,89 +521,10 @@ func (d *daemon) pauseWarming() {
 	}
 }
 
-// touch records dir as the most recently used model.
-func (d *daemon) touch(dir string) {
-	d.lru = slices.DeleteFunc(d.lru, func(s string) bool { return s == dir })
-	d.lru = append(d.lru, dir)
-}
-
-// cached is what every resident model costs together.
-func (d *daemon) cached() uint64 {
-	var total uint64
-	for _, m := range d.models {
-		total += m.Bytes()
-	}
-	return total
-}
-
-// overBudget is which models to drop, oldest first, to bring a cache holding
-// `sizes` within budget. The last entry in lru is the one in use and is never
-// returned, so a budget too small even for one model degrades to keeping
-// exactly that one rather than to keeping none.
-//
-// Split from evict so the policy can be tested without loading a model.
-func overBudget(lru []string, sizes map[string]uint64, budget uint64) []string {
-	var total uint64
-	for _, s := range sizes {
-		total += s
-	}
-	var drop []string
-	for i := 0; i+1 < len(lru) && total > budget; i++ {
-		drop = append(drop, lru[i])
-		total -= sizes[lru[i]]
-	}
-	return drop
-}
-
-// evict frees least-recently-used models until the resident set fits the
-// budget. Models stay loaded because switching back is then instant, but on
-// a laptop GPU that generosity runs out: the card here has 8 GB, and ggml's
-// context and compute buffers cost more than the weights do for a small
-// model, so a few switches can fill it.
-func (d *daemon) evict() {
-	// Nothing may be closed while a background run holds a model.
+func (d *daemon) closeModel() {
 	d.settle()
-	sizes := make(map[string]uint64, len(d.models))
-	for dir, m := range d.models {
-		sizes[dir] = m.Bytes()
-	}
-	for _, dir := range overBudget(d.lru, sizes, d.budget) {
-		log.Printf("Evicting %s (%s), cache over %s budget",
-			dir, human.Bytes(sizes[dir]), human.Bytes(d.budget))
-		d.models[dir].Close()
-		delete(d.models, dir)
-		// The rehearsal goes with it: what a model has run is a property of
-		// the loaded model, and loading it again starts from nothing.
-		delete(d.rehearsals, dir)
-		d.lru = slices.DeleteFunc(d.lru, func(s string) bool { return s == dir })
-	}
-}
-
-// cacheBudget is how much memory resident models may hold together.
-// Configured in MB, or two thirds of what the compute device had free when the
-// daemon started: enough to keep a couple of models around, with room left for
-// the rest of the desktop on a shared laptop GPU. A device that reports no
-// memory falls back to a figure that fits the models in the menu without
-// assuming a big card.
-//
-// Free rather than total, because the third left over has to cover the compute
-// buffers of whichever model is in use, and those grow with the length of the
-// dictation. Struck against the total it would also be counting the memory the
-// compositor already holds, which was never ours to spend.
-func cacheBudget(cfg *config.Config) uint64 {
-	if cfg.ModelCacheMB > 0 {
-		return uint64(cfg.ModelCacheMB) << 20
-	}
-	if free := asr.DeviceFree(); free > 0 {
-		return free / 3 * 2
-	}
-	return 4 << 30
-}
-
-func (d *daemon) closeModels() {
-	d.settle()
-	for _, m := range d.models {
-		m.Close()
+	if d.model != nil {
+		d.model.Close()
 	}
 }
 

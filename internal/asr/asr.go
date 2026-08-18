@@ -435,21 +435,6 @@ func (m *Model) Arch() string {
 	return m.name + " on " + where
 }
 
-// DeviceFree is the free memory of the device transcription will run on, or 0
-// when the backend reports none. It is what a cache budget is a fraction of.
-//
-// Free rather than total, because the card is shared with the desktop that is
-// drawing on it: on this laptop 1.4 GB of the 8 was spoken for before diktat
-// started, and a budget struck against the 8 counts it twice.
-func DeviceFree() uint64 {
-	quiet.Do(keepComplaints)
-	opts, _, err := placement()
-	if err != nil {
-		return 0
-	}
-	return deviceFree(opts)
-}
-
 func (m *Model) Close() {
 	if m.s != nil {
 		m.s.Close()

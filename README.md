@@ -208,10 +208,9 @@ never implicit: starting the daemon without the model it wants tells you what
 to type rather than fetching it. Anything with a slash is used as a path, so an
 out-of-menu model still works.
 
-Every model stays resident once loaded, so switching back to one already seen
-is instant, up to a memory ceiling: past it the least recently used ones are
-dropped, never the one in use. Set `model_cache_mb` to change the ceiling; it
-defaults to two thirds of what the GPU had free at startup. A swap does not
+Only the model in use is held: the one it replaces is freed as soon as the new
+one can transcribe, so a switch down to a small model gives the card its memory
+back. The old one keeps serving while the new one loads, and a swap does not
 interrupt a recording in progress, since the capture buffer is independent of
 the model.
 If the new model fails to load, the daemon keeps serving with the one it has.
@@ -252,16 +251,15 @@ purpose:
 
 Those were measured with moonshine alone; the whispers are roughly half: 275
 MB loaded, settling near 680 MB. The newer and larger
-entries in the menu cost considerably more, which is what the cache budget
-below is for.
+entries in the menu cost considerably more: canary-qwen-2.5b settles around
+3.4 GB on the card, which is why only one model is kept.
 
-Models switched into with `diktat model` stay resident, so switching back
-costs nothing after the first load. That is bounded: past `model_cache_mb`
-the least recently used are freed, never the one in use. The ceiling matters
-because a model costs far more than its file on disk, since ggml's context
-and compute buffers outweigh the weights of a small model several times
-over; the daemon measures the real cost at load rather than guessing from
-the file size.
+Switching with `diktat model` frees the model being left as soon as the new
+one is ready, so the daemon holds one model rather than every model tried. It
+matters because a model costs far more than its file on disk, since ggml's
+context and compute buffers outweigh the weights of a small model several
+times over: the daemon measures the real cost at load and again as
+transcriptions grow the buffers, and says both in the log.
 
 Recording runs until you stop it. The sample buffer grows at 32 KB/s while it
 does, and a model's compute buffers grow with the length of the audio, so a
