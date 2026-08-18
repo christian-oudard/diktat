@@ -37,8 +37,15 @@ devShell above sets up; and `go.mod` reaches the bindings through a relative
 
 You may want to check what version you just installed with `diktat version`.
 
+## Running the Diktat daemon
+
 
 ## Usage
+
+First you need to select download a speech model:
+`$ diktat model`
+
+
 
 Fetch a model, run `diktat daemon` for the whole session, and bind
 `diktat toggle` to a key in your Sway config:
