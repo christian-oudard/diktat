@@ -42,6 +42,18 @@ func main() {
 	os.Exit(1)
 }
 
+// prompt asks a question on stderr, where every message this tool writes
+// goes: the log does too, with its flags off, so the two are one stream and
+// there is only ever one place to look. It exists next to log.Printf only
+// because a question ends in a space rather than a newline.
+//
+// Stdout carries the answer to the command and nothing else -- the menu, the
+// version -- since a message there is indistinguishable from data to whatever
+// is parsing it.
+func prompt(format string, a ...any) {
+	fmt.Fprintf(os.Stderr, format, a...)
+}
+
 func usage(w *os.File) {
 	fmt.Fprintln(w, "usage: diktat <command> [args]")
 	fmt.Fprintln(w)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -16,6 +17,7 @@ var (
 )
 
 func runVersion(args []string) {
+	log.SetFlags(0)
 	// Stamped as RFC3339 in UTC, because ldflags cannot carry a space and the
 	// build clock is UTC. Show it in the reader's own timezone.
 	if t, err := time.Parse(time.RFC3339, gitDate); err == nil {
@@ -31,8 +33,8 @@ func runVersion(args []string) {
 		return
 	}
 	if running := ipc.ExePath(pid); running != exePath() {
-		fmt.Printf("daemon is a different build (pid %d): %s\n", pid, running)
-		fmt.Println("restart it with: systemctl --user restart diktat")
+		log.Printf("daemon is a different build (pid %d): %s", pid, running)
+		log.Printf("restart it with: systemctl --user restart diktat")
 	}
 }
 

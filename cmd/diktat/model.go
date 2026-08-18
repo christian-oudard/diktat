@@ -44,10 +44,10 @@ func askWhich(inUse string) string {
 	if inUse != "" {
 		keep = "keep " + inUse
 	}
-	fmt.Printf("\nSelect 1-%d, or Enter to %s: ", len(models.Catalog), keep)
+	prompt("\nSelect 1-%d, or Enter to %s: ", len(models.Catalog), keep)
 	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
 	if err != nil {
-		fmt.Println()
+		prompt("\n")
 		return ""
 	}
 	return strings.TrimSpace(line)
@@ -94,12 +94,12 @@ func listModels() string {
 	}
 	switch doing {
 	case "loading":
-		fmt.Printf("\n> loading %s\n", busy)
+		log.Printf("Loading %s", busy)
 	case "warming":
 		// Said plainly, because the honest answer to "is it ready" here is
 		// yes: a rehearsal costs the first dictation at an unseen length, not
 		// the ability to have one.
-		fmt.Printf("\nwarming %s, which is usable meanwhile\n", busy)
+		log.Printf("Warming %s, which is usable meanwhile", busy)
 	}
 	// A model outside the menu gets no marker, so there would otherwise be
 	// nothing anywhere saying what is in use. Say when it is not there: a
@@ -112,7 +112,7 @@ func listModels() string {
 		if models.Check(current) != nil {
 			missing = "  (not there; pick another)"
 		}
-		fmt.Printf("\nusing %s%s\n", current, missing)
+		log.Printf("Using %s%s", current, missing)
 	}
 	return inUse
 }
@@ -196,15 +196,13 @@ func switchModel(nameOrNumber string) {
 	// it starts.
 	pid := ipc.ReadPID()
 	if pid == 0 {
-		fmt.Printf("using %s\n", remembered)
+		log.Printf("Using %s", remembered)
 		return
 	}
 	// What the daemon has now, read before the request overwrites it, so this
-	// can say which of the two things is about to happen. A 1.8 GiB model
-	// takes tens of seconds to become the model in use, and saying "using"
-	// while the daemon was still reading it off disk was the only word anyone
-	// got: the bar's LOAD light is the other half of the answer, and it is
-	// not on screen yet when this prints.
+	// can say which of the two things is about to happen. A 1.8 GiB model is
+	// seconds away from being the model in use, and "using" was the only word
+	// anyone got while the daemon was still reading it off disk.
 	loaded := loadedModel()
 	modelPath, err := ipc.ModelPath()
 	if err != nil {
@@ -217,13 +215,10 @@ func switchModel(nameOrNumber string) {
 		log.Fatalf("signal daemon: %v", err)
 	}
 	if path == loaded {
-		fmt.Printf("using %s\n", remembered)
+		log.Printf("Using %s", remembered)
 		return
 	}
-	// Switching rather than loading, because a model this daemon has held
-	// since an earlier switch is installed at once and never loaded. Which of
-	// those it is only the daemon knows, and the bar is where it says so.
-	fmt.Printf("switching to %s, the bar shows LOAD until it can transcribe\n", remembered)
+	log.Printf("Switching to %s", remembered)
 }
 
 // confirm asks before spending someone's bandwidth, since a model runs to a
@@ -231,10 +226,10 @@ func switchModel(nameOrNumber string) {
 // stdin closed or coming from /dev/null means nobody is there to answer, and
 // naming a model is intent enough on its own.
 func confirm(question string) bool {
-	fmt.Fprintf(os.Stderr, "%s [Y/n] ", question)
+	prompt("%s [Y/n] ", question)
 	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "y")
+		prompt("y\n")
 		return true
 	}
 	switch strings.ToLower(strings.TrimSpace(line)) {
