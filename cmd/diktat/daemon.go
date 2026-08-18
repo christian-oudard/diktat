@@ -138,7 +138,7 @@ func runDaemon(args []string) {
 	// Ready here, not after the rehearsal: the model can transcribe as soon as
 	// it is loaded, and warming it is worth several seconds on a large one.
 	// Those seconds are spent between dictations from now on.
-	log.Printf("Model loaded: %s", model.Arch())
+	log.Printf("Model loaded: %s (%s)", model.Arch(), model.LoadTimings())
 	d.install(modelDir, model)
 
 	// The look for a suspend. Two seconds so the reload is under way before
@@ -477,8 +477,8 @@ func (d *daemon) finishLoad(res loadResult) {
 		}
 	default:
 		d.install(res.dir, res.model)
-		log.Printf("Model now %s in %s, %s resident",
-			res.model.Arch(), res.took.Round(time.Millisecond),
+		log.Printf("Model now %s in %s (%s), %s resident",
+			res.model.Arch(), res.took.Round(time.Millisecond), res.model.LoadTimings(),
 			human.Bytes(res.model.Bytes()))
 	}
 	// A request made during the load, unless it asked for what the load just

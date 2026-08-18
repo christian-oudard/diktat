@@ -1,8 +1,11 @@
 package asr
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Whisper answers silence with a non-speech marker rather than with nothing.
@@ -74,5 +77,29 @@ func TestComplaintsSinceMark(t *testing.T) {
 	got := since(mark)
 	if n := strings.Count(got, "line"); n != keptComplaints {
 		t.Errorf("kept %d lines of %d, want the last %d: %q", n, keptComplaints*2, keptComplaints, got)
+	}
+}
+
+// A load is one number in the log, and a slow one has no shortage of possible
+// explanations. Splitting the file read off the rest is what says which half
+// it is even in, so prefetch has to actually read the file and report what a
+// missing one costs rather than passing silently.
+func TestPrefetch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "model.gguf")
+	if err := os.WriteFile(path, make([]byte, 1<<20), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := prefetch(path); err != nil {
+		t.Errorf("prefetch of a readable file: %v", err)
+	}
+	if err := prefetch(filepath.Join(t.TempDir(), "absent.gguf")); err == nil {
+		t.Error("prefetch of a missing file reported no error")
+	}
+}
+
+func TestLoadTimingsString(t *testing.T) {
+	got := LoadTimings{Read: 1500 * time.Millisecond, Open: 2 * time.Second}.String()
+	if want := "read 1.5s, open 2s"; got != want {
+		t.Errorf("LoadTimings.String() = %q, want %q", got, want)
 	}
 }

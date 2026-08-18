@@ -342,6 +342,18 @@ free memory either side of the load for the weights and context, and the
 compute buffers are added as transcriptions grow them. A backend reporting no
 memory falls back to the file size.
 
+How long it took is split the same way. A load used to be one number, and a
+523 MiB model that took 1m59s of it was blamed on the card being full, then on
+the weights going over PCIe a tensor at a time, before anyone could say which
+half of the load it was even in; both were wrong, and neither was cheap to
+rule out. So `asr.Load` reads the file through once and discards it before
+handing the path to the library, which reads it again from the page cache that
+read just filled. The two numbers separate waiting for a disk from everything
+the library does afterwards, which is the only seam visible from here:
+`transcribe.Open` is one call and logs nothing timed. The extra read is close
+to free on a warm cache, and on a cold one it is the same read either way,
+only now it is the half that has a number on it.
+
 ## IPC files
 
 Split by lifetime. In `$XDG_RUNTIME_DIR/diktat/`, which is per-user, mode

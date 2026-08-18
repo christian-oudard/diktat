@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -109,8 +110,10 @@ type Model struct {
 	resident uint64
 	graph    uint64
 	longest  time.Duration
-	// timings is where the last transcription went.
+	// timings is where the last transcription went, and load is where the
+	// load itself went.
 	timings Timings
+	load    LoadTimings
 	// mu guards the three above. A run is single-threaded, but it is not
 	// always on the thread that asks what the model costs: the daemon
 	// rehearses in the background and its main loop goes on reporting the
@@ -134,6 +137,27 @@ type Timings struct {
 	Mel, Encode, Decode, Other time.Duration
 }
 
+// LoadTimings is where a load's time went, split at the only seam visible
+// from here: pulling the file off disk, and everything the library does with
+// it afterwards.
+//
+// Worth splitting because a load is otherwise a single opaque number, and one
+// that ran long has no shortage of candidate explanations: a cold page cache,
+// a busy disk, the weights going over PCIe, the backend allocating. A
+// two-minute load of a 523 MiB model was blamed on three different things
+// before anyone could say which half it was even in.
+type LoadTimings struct {
+	Read, Open time.Duration
+}
+
+func (t LoadTimings) String() string {
+	return fmt.Sprintf("read %s, open %s",
+		t.Read.Round(time.Millisecond), t.Open.Round(time.Millisecond))
+}
+
+// LoadTimings is where this model's load went.
+func (m *Model) LoadTimings() LoadTimings { return m.load }
+
 // Load opens a GGUF model and keeps it open.
 func Load(path string) (*Model, error) {
 	info, err := os.Stat(path)
@@ -146,9 +170,23 @@ func Load(path string) (*Model, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Read the file through once before handing it over. This is a
+	// measurement first: the library reads it again immediately, from the
+	// page cache this read just filled, so the two numbers below separate
+	// waiting for a disk from everything else. It is close to free when the
+	// cache is already warm, and when it is not, the read happens either way
+	// and this is only the half of it that can be timed.
+	read := time.Now()
+	if err := prefetch(path); err != nil {
+		return nil, fmt.Errorf("model: %w", err)
+	}
+	timings := LoadTimings{Read: time.Since(read)}
+
 	before := deviceFree(opts)
 	mark := complaintMark()
+	opened := time.Now()
 	s, err := transcribe.Open(path, opts, nil)
+	timings.Open = time.Since(opened)
 	if err != nil {
 		// With what the library said about it. "gguf load error" on its own
 		// says a file did not load and nothing about which part of it the
@@ -161,6 +199,7 @@ func Load(path string) (*Model, error) {
 		gpu:      gpu,
 		device:   deviceIndex(opts),
 		resident: uint64(info.Size()),
+		load:     timings,
 	}
 	// What the load itself took off the device, which is more than the file:
 	// the weights are joined by the context the session keeps. A backend that
@@ -170,6 +209,18 @@ func Load(path string) (*Model, error) {
 		m.resident = before - after
 	}
 	return m, nil
+}
+
+// prefetch reads a file and keeps none of it, so that what it cost to pull off
+// disk is a number of its own rather than part of the load's.
+func prefetch(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = io.Copy(io.Discard, f)
+	return err
 }
 
 // Bytes is what this model costs on its device now: the weights and context it
