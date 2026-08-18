@@ -23,6 +23,7 @@ import (
 	"github.com/christian-oudard/diktat/internal/ipc"
 	"github.com/christian-oudard/diktat/internal/models"
 	"github.com/christian-oudard/diktat/internal/output"
+	"github.com/christian-oudard/diktat/internal/suspend"
 	"github.com/christian-oudard/diktat/internal/warmup"
 )
 
@@ -130,6 +131,7 @@ func runDaemon(args []string) {
 		cfg:       cfg,
 		loaded:    make(chan loadResult, 1),
 		rehearsed: make(chan bucketResult, 1),
+		asleep:    suspend.Total(),
 	}
 	defer d.closeModel()
 	defer os.Remove(activityPath)
@@ -139,8 +141,15 @@ func runDaemon(args []string) {
 	log.Printf("Model loaded: %s", model.Arch())
 	d.install(modelDir, model)
 
+	// The look for a suspend. Two seconds so the reload is under way before
+	// anyone is back at the keyboard; the tick itself is two clock reads.
+	tick := time.NewTicker(2 * time.Second)
+	defer tick.Stop()
+
 	for {
 		select {
+		case <-tick.C:
+			d.checkSuspend()
 		case sig := <-sigCh:
 			switch sig {
 			case syscall.SIGUSR1:
@@ -206,6 +215,22 @@ type daemon struct {
 	// count would skip a length.
 	bucket bool
 
+	// probing says the run in flight is the wake run, and probe is what it
+	// made of the speech it was given. The goroutine writes probe and the main
+	// loop reads it once busy has closed, which is what orders the two.
+	// answered says the model in use has had words for that clip at least
+	// once, so an empty answer now is a change rather than how it always was.
+	probing  bool
+	probe    string
+	answered bool
+
+	// asleep is the machine's suspend total as of the last look, and suspends
+	// counts the sleeps noticed. A load carries the count it started under, so
+	// one that read the card before a sleep is thrown away rather than
+	// installed; see finishLoad.
+	asleep   time.Duration
+	suspends int
+
 	mu        sync.Mutex
 	recording bool
 }
@@ -232,15 +257,21 @@ type bucketResult struct {
 	secs     int
 	took     time.Duration
 	compiled uint64
-	err      error
+	// text is what the model made of the rehearsal's known speech, which is
+	// what says it is working at all. See checkProbe.
+	text string
+	err  error
 }
 
-// loadResult is a finished background load, successful or not.
+// loadResult is a finished background load, successful or not. gen is the
+// daemon's suspend count when the load began: a result from before the latest
+// sleep may describe memory the card has since dropped.
 type loadResult struct {
 	dir   string
 	model *asr.Model
 	err   error
 	took  time.Duration
+	gen   int
 }
 
 func (d *daemon) publishModel() {
@@ -335,23 +366,69 @@ func (d *daemon) switchTo(dir string) {
 		// and finishLoad starts this one when it reports back.
 		d.dropLoad(dir)
 	case stepLoad:
-		ctx, cancel := context.WithCancel(context.Background())
-		d.loading, d.cancel = dir, cancel
-		d.restoreStatus()
-		log.Printf("Loading %s in the background", dir)
-		go func() {
-			t0 := time.Now()
-			model, err := asr.Load(dir)
-			// Cancelled while it was reading: nobody is waiting for this
-			// model any more, and it is holding memory the one they did ask
-			// for is about to want.
-			if err == nil && ctx.Err() != nil {
-				model.Close()
-				model, err = nil, ctx.Err()
-			}
-			d.loaded <- loadResult{dir: dir, model: model, err: err, took: time.Since(t0)}
-		}()
+		d.startLoad(dir)
 	}
+}
+
+// startLoad begins loading a model off the main loop, unconditionally: the
+// decision that a load is the right answer belongs to switchTo, except after a
+// resume, when the model to load is the one nominally in use and plan would
+// call it nothing to do.
+func (d *daemon) startLoad(dir string) {
+	ctx, cancel := context.WithCancel(context.Background())
+	d.loading, d.cancel = dir, cancel
+	gen := d.suspends
+	d.restoreStatus()
+	log.Printf("Loading %s in the background", dir)
+	go func() {
+		t0 := time.Now()
+		model, err := asr.Load(dir)
+		// Cancelled while it was reading: nobody is waiting for this
+		// model any more, and it is holding memory the one they did ask
+		// for is about to want.
+		if err == nil && ctx.Err() != nil {
+			model.Close()
+			model, err = nil, ctx.Err()
+		}
+		d.loaded <- loadResult{dir: dir, model: model, err: err, took: time.Since(t0), gen: gen}
+	}()
+}
+
+// checkSuspend notices that the machine has slept since the last look and
+// reloads the model, because the card's memory may not have survived: unless
+// the driver was told to preserve video memory, the weights are discarded and
+// the model runs its graphs at full speed returning nothing. Reloading on
+// every resume costs a few background seconds on a machine whose driver did
+// preserve them, and is the only answer that needs nothing from the driver on
+// the machines where it did not.
+//
+// Polled off a ticker rather than told by logind, so it works the same with
+// no D-Bus and no systemd, and it counts sleeps nothing orchestrated. The
+// ticker does not tick while the machine is suspended, so the look after a
+// resume comes within one period of it.
+func (d *daemon) checkSuspend() {
+	total := suspend.Total()
+	// Half a second of slack for reading two clocks a syscall apart; a real
+	// suspend is seconds at the least.
+	if total-d.asleep < 500*time.Millisecond {
+		return
+	}
+	slept := total - d.asleep
+	d.asleep = total
+	d.suspends++
+	// A model on the CPU sleeps in RAM, which suspend preserves by definition.
+	if d.model == nil || !d.model.OnGPU() {
+		return
+	}
+	log.Printf("Machine was suspended for %s; the card may have dropped what it held",
+		slept.Round(time.Second))
+	if d.loading != "" {
+		// The load in flight began before the sleep, so finishLoad throws its
+		// model away and starts it over; a second load now would race it for
+		// the card.
+		return
+	}
+	d.startLoad(d.modelDir)
 }
 
 // dropLoad stops the load in flight and records what to load instead, or ""
@@ -387,6 +464,17 @@ func (d *daemon) finishLoad(res loadResult) {
 		// Keep serving with the model we have. The published model still
 		// names it, since a request never overwrote it.
 		log.Printf("model load %s: %v", res.dir, res.err)
+	case res.gen != d.suspends:
+		// The machine slept while this load was reading the card, so what it
+		// loaded may already be gone. Installing it would put a model that
+		// looks fresh but may be mute where the whole point of the reload was
+		// certainty; do it again. Unless something newer was asked for, which
+		// the lines below start, and which replaces this model anyway.
+		res.model.Close()
+		if d.wanted == "" {
+			log.Printf("The machine slept while %s was loading; loading it again", res.dir)
+			d.startLoad(res.dir)
+		}
 	default:
 		d.install(res.dir, res.model)
 		log.Printf("Model now %s in %s, %s resident",
@@ -425,6 +513,8 @@ func (d *daemon) install(dir string, model *asr.Model) {
 		d.model.Close()
 	}
 	d.model, d.modelDir = model, dir
+	// What the model it replaces had words for says nothing about this one.
+	d.answered = false
 	d.publishModel()
 	d.startWarming(dir, model)
 	d.restoreStatus()
@@ -471,9 +561,9 @@ func (d *daemon) warmNext() {
 	go func() {
 		defer close(done)
 		t0 := time.Now()
-		compiled, err := warmup.Bucket(ctx, model, secs)
+		compiled, text, err := warmup.Bucket(ctx, model, secs)
 		d.rehearsed <- bucketResult{model: model, done: done, secs: secs,
-			took: time.Since(t0), compiled: compiled, err: err}
+			took: time.Since(t0), compiled: compiled, text: text, err: err}
 	}()
 }
 
@@ -485,6 +575,15 @@ func (d *daemon) finishBucket(res bucketResult) {
 	// that one has not finished.
 	if d.busy == res.done {
 		d.busy = nil
+	}
+	// A rehearsal runs the same known speech the wake run does, and it runs
+	// within a second or two of every load. Taking the baseline from it rather
+	// than from the first dictation is what covers the machine suspended
+	// before anyone dictated: without it the model has never answered, so the
+	// silence after the resume is not a change from anything and the daemon
+	// would stay mute for the rest of the session.
+	if res.model == d.model && res.text != "" {
+		d.answered = true
 	}
 	if w := d.warming; w != nil && w.model == res.model && !w.record(res) {
 		log.Printf("warmup: %v", res.err)
@@ -580,7 +679,13 @@ func (d *daemon) isRecording() bool {
 	return d.recording
 }
 
+// The bar is written first on both toggles, before anything else the press
+// sets off. The press is the only thing the light is reporting, so what the
+// daemon happens to be doing when it arrives may not delay it: everything
+// below is a cancel, a goroutine or a mutex today, and the guarantee should
+// not rest on that staying true.
 func (d *daemon) startRecording() {
+	setStatus(statusRec)
 	d.startedAt = time.Now()
 	d.recorder.Start()
 	d.mu.Lock()
@@ -592,7 +697,6 @@ func (d *daemon) startRecording() {
 	// so it wakes the card just as well.
 	d.pauseWarming()
 	d.wake()
-	setStatus(statusRec)
 	log.Println("Recording...")
 }
 
@@ -602,10 +706,15 @@ func (d *daemon) startRecording() {
 // one encoded in 993ms where the same utterance back to back encoded in 27ms.
 // A single short run absorbs it, and it has seconds of speech to hide behind.
 //
-// The run is a length the warmup already rehearsed, so it compiles nothing,
-// and it is thrown away. Errors are ignored: this is an optimisation, and the
-// transcription that follows will report anything real.
+// The run is a length the warmup already rehearsed, so it compiles nothing.
+// Errors are ignored: this is an optimisation, and the transcription that
+// follows will report anything real.
+//
+// What it says is kept rather than thrown away. This is the only run all
+// session on audio whose words are known in advance, which makes checking the
+// answer a free test that the model still works; see checkProbe.
 func (d *daemon) wake() {
+	d.probing = false
 	if !d.model.OnGPU() || d.busy != nil {
 		return
 	}
@@ -614,12 +723,92 @@ func (d *daemon) wake() {
 		return
 	}
 	done := make(chan struct{})
-	d.busy = done
+	d.busy, d.probing = done, true
 	model := d.model
 	go func() {
 		defer close(done)
-		model.Transcribe(context.Background(), warmup.Fit(speech, 1))
+		d.probe, _ = model.Transcribe(context.Background(), warmup.Fit(speech, 1))
 	}()
+}
+
+// checkProbe reloads the model if the wake run says it has stopped working.
+//
+// A model whose weights are no longer in the card's memory does not fail: it
+// runs its graphs at the usual speed and returns nothing at all, on every
+// utterance, until something reloads it. That is what a suspend does here,
+// since the contents of video memory do not survive one unless the driver was
+// told to save them, and the daemon holds its model across the whole session
+// by design. Before this, every dictation after a resume typed nothing and the
+// log gave no reason beyond "0 chars".
+//
+// A suspend itself is noticed directly, by checkSuspend, whose reload is
+// under way before anyone is back at the keyboard. This is the backstop
+// behind it: a dictation begun inside that reload, and video memory lost to
+// anything that is not a suspend, which nothing else would notice.
+func (d *daemon) checkProbe() {
+	if !d.probing {
+		return
+	}
+	broken := mute(d.probe, d.answered)
+	d.probing, d.answered = false, d.answered || d.probe != ""
+	if !broken {
+		return
+	}
+
+	// On the main loop, unlike every other load here, and deliberately: the
+	// model in use cannot transcribe, so there is nothing to answer a keypress
+	// with in the meantime. The capture is already in hand and is transcribed
+	// by the new model, so the dictation that found this is not lost.
+	if d.loading == d.modelDir {
+		// checkSuspend saw the sleep too and its reload is already on its way;
+		// a second copy of the same model would race it for the card. Wait it
+		// out here instead, for the same reason the load below is synchronous.
+		log.Printf("Model said nothing to speech it has words for; waiting out the reload in flight")
+		d.finishLoad(<-d.loaded)
+		if d.loading != "" {
+			// The reload gave way to a newer request; let that one land.
+			return
+		}
+	} else {
+		log.Printf("Model said nothing to speech it has words for; reloading %s", d.modelDir)
+		model, err := asr.Load(d.modelDir)
+		if err != nil {
+			log.Fatalf("reload %s: %v", d.modelDir, err)
+		}
+		d.install(d.modelDir, model)
+	}
+	// install puts the bar back to what the daemon's state says, which during
+	// this is a recording that has already stopped. The wait is still the one
+	// the caller started, so say so again.
+	setStatus(statusTx)
+
+	// Whether a fresh load into the same process is enough is not something
+	// the daemon can know: it recreates the model, not the device it lives on.
+	// If the reload is still mute the process is what has to go, and the unit
+	// restarts it, which is the recovery that was known to work by hand.
+	speech, err := warmup.Speech()
+	if err != nil {
+		return
+	}
+	text, err := d.model.Transcribe(context.Background(), warmup.Fit(speech, 1))
+	if err != nil {
+		log.Fatalf("probe %s: %v", d.modelDir, err)
+	}
+	if text == "" {
+		log.Fatalf("Reloaded %s is still mute; restarting.", d.modelDir)
+	}
+	d.answered = true
+}
+
+// mute reports whether the wake run's answer says the model has stopped
+// working: nothing back from a clip it has had words for before.
+//
+// A model that has never answered the clip is not judged. It is a second of
+// the same synthesised sentence every time, so a model with words for it once
+// has words for it always; one that never had any would otherwise be reloaded
+// before every dictation for as long as it stayed in use.
+func mute(probe string, answered bool) bool {
+	return probe == "" && answered
 }
 
 // settle waits for the background run holding the model to finish. A model is
@@ -633,9 +822,17 @@ func (d *daemon) settle() {
 	d.busy = nil
 }
 
+// TX covers everything between the press and the text: waiting out the wake
+// run, reloading a model that has gone quiet, and the transcription itself.
+// From outside, all of it is one wait, and REC through any of it says the mic
+// is live when it is not. The recording flag does not move up with the status,
+// since it is also what keeps a rehearsal from starting on the model this
+// transcription is about to want.
 func (d *daemon) stopRecording() {
+	setStatus(statusTx)
 	samples := d.recorder.Stop()
 	d.settle()
+	d.checkProbe()
 	d.mu.Lock()
 	d.recording = false
 	d.mu.Unlock()
@@ -651,7 +848,6 @@ func (d *daemon) stopRecording() {
 		return
 	}
 
-	setStatus(statusTx)
 	peak, rms := audio.Levels(samples)
 	silent := audio.IsSilent(samples)
 	// One gain for the whole capture, applied to each piece as it is

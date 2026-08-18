@@ -2,10 +2,12 @@ package main
 
 import (
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/christian-oudard/diktat/internal/asr"
+	"github.com/christian-oudard/diktat/internal/suspend"
 )
 
 // A switch answers the most recent request. These cover which of them needs a
@@ -114,5 +116,139 @@ func TestDropLoad(t *testing.T) {
 	idle.dropLoad("")
 	if idle.wanted != "untouched" {
 		t.Errorf("dropLoad touched an idle daemon: wanted = %q", idle.wanted)
+	}
+}
+
+// A model whose weights are gone from the card does not fail, it goes quiet:
+// the graphs still run at their usual speed and every dictation comes back
+// empty. A suspend does that, and the daemon holds one model for the whole
+// session, so before this it stayed quiet until someone noticed and restarted
+// it. The wake run is the one run all session whose words are known ahead of
+// time, so its answer is what says which of the two silences this is.
+func TestMute(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		probe    string
+		answered bool
+		want     bool
+	}{
+		{name: "words, as ever", probe: "the birch canoe", answered: true},
+		{name: "silent where it used to speak", answered: true, want: true},
+		// Never having had words for the clip is not a change, and reloading on
+		// it would reload before every dictation for as long as that model was
+		// in use.
+		{name: "silent and always was"},
+		{name: "words for the first time", probe: "the birch canoe"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := mute(c.probe, c.answered); got != c.want {
+				t.Errorf("mute(%q, %v) = %v, want %v", c.probe, c.answered, got, c.want)
+			}
+		})
+	}
+}
+
+// Where that baseline comes from. Taking it from the first dictation is not
+// enough: a machine suspended before anyone dictated leaves a model that has
+// never answered, so the silence afterwards is not a change from anything and
+// the daemon would stay mute for the whole session. The rehearsal runs the
+// same known speech within a second or two of every load, so it answers first.
+func TestFinishBucketAnswers(t *testing.T) {
+	statusPath = filepath.Join(t.TempDir(), "status")
+	activityPath = filepath.Join(t.TempDir(), "activity")
+
+	// A load in flight is what keeps finishBucket from starting the next
+	// length on a model these tests do not have.
+	inUse, other := new(asr.Model), new(asr.Model)
+	d := &daemon{model: inUse, loading: "/models/loading",
+		warming: &rehearsal{model: inUse, buckets: []int{1, 2}}}
+
+	d.finishBucket(bucketResult{model: inUse, secs: 1, text: "the birch canoe"})
+	if !d.answered {
+		t.Error("a rehearsal with words for the clip did not set the baseline")
+	}
+
+	// A length that lands after a switch describes the model it ran on, which
+	// is no longer the one a later silence would be judged against.
+	d = &daemon{model: inUse, loading: "/models/loading",
+		warming: &rehearsal{model: other, buckets: []int{1, 2}}}
+	d.finishBucket(bucketResult{model: other, secs: 1, text: "the birch canoe"})
+	if d.answered {
+		t.Error("a rehearsal of the model just replaced set the baseline for its replacement")
+	}
+}
+
+// A suspend discards the card's memory unless the driver was told to save it,
+// so the daemon watches the kernel's ledger of sleep and reloads when it
+// moves. These cover the bookkeeping; the reload itself needs a card.
+func TestCheckSuspend(t *testing.T) {
+	statusPath = filepath.Join(t.TempDir(), "status")
+	activityPath = filepath.Join(t.TempDir(), "activity")
+
+	// Nothing slept: nothing to notice.
+	d := &daemon{asleep: suspend.Total()}
+	d.checkSuspend()
+	if d.suspends != 0 || d.loading != "" {
+		t.Errorf("a machine that never slept was treated as resumed: suspends %d, loading %q",
+			d.suspends, d.loading)
+	}
+
+	// The machine slept, but the model lives in RAM, which a suspend preserves
+	// by definition. The sleep is still counted, since a load in flight is
+	// judged against the count.
+	d = &daemon{model: new(asr.Model), asleep: suspend.Total() - time.Hour}
+	d.checkSuspend()
+	if d.suspends != 1 {
+		t.Errorf("suspends = %d, want the sleep counted", d.suspends)
+	}
+	if d.loading != "" {
+		t.Errorf("a CPU model was reloaded after a resume: loading %q", d.loading)
+	}
+	// One sleep is one sleep, not one per look after it.
+	d.checkSuspend()
+	if d.suspends != 1 {
+		t.Errorf("one sleep counted twice: suspends = %d", d.suspends)
+	}
+}
+
+// A load that was reading the card when the machine slept may describe memory
+// that is already gone, so what it produced is closed unopened and the load
+// runs again, unless something newer was asked for meanwhile, whose model
+// replaces this one anyway.
+func TestFinishLoadStaleGeneration(t *testing.T) {
+	statusPath = filepath.Join(t.TempDir(), "status")
+	activityPath = filepath.Join(t.TempDir(), "activity")
+
+	d := &daemon{suspends: 1, loaded: make(chan loadResult, 1)}
+	d.finishLoad(loadResult{dir: "/models/stale", model: new(asr.Model), gen: 0})
+	if d.loading != "/models/stale" {
+		t.Errorf("loading = %q, want the stale load started over", d.loading)
+	}
+
+	d = &daemon{suspends: 1, loaded: make(chan loadResult, 1), wanted: "/models/newer"}
+	d.finishLoad(loadResult{dir: "/models/stale", model: new(asr.Model), gen: 0})
+	if d.loading != "/models/newer" {
+		t.Errorf("loading = %q, want the newer request honoured over the rerun", d.loading)
+	}
+}
+
+// The daemon's bookkeeping around that: a probe is judged once, and a model
+// that has spoken is remembered as having spoken.
+func TestCheckProbeRemembersAnswers(t *testing.T) {
+	d := &daemon{probing: true, probe: "the birch canoe"}
+	d.checkProbe()
+	if !d.answered {
+		t.Error("an answered probe was not remembered")
+	}
+	if d.probing {
+		t.Error("the probe was left to be judged a second time")
+	}
+
+	// A run that was not the wake run leaves no probe to judge, and the stale
+	// answer from the last one must not be read as this one's.
+	d = &daemon{answered: true}
+	d.checkProbe()
+	if !d.answered {
+		t.Error("a daemon with no probe in flight was judged anyway")
 	}
 }

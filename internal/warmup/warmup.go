@@ -44,25 +44,33 @@ func Buckets(m *asr.Model) []int {
 }
 
 // Bucket rehearses one length and reports how many kernels it compiled that
-// no earlier run had.
+// no earlier run had, and what the model made of the speech.
+//
+// The transcript is not what a rehearsal is for, but it is worth carrying back:
+// this is known audio, so whether any words came back at all says whether the
+// model is working, and a rehearsal is the earliest anything asks it. The
+// daemon uses that to tell a model that has never had words for this clip from
+// one that has stopped having them.
 //
 // A truncated rehearsal is a success: the graph ran, which is the entire
-// point, and the transcript is thrown away either way. An audio-LLM can talk
-// its way to the decode budget on synthesised speech, and giving up there
-// would leave the cache budgeting the largest models by their file size.
+// point, and the transcript is a partial answer rather than no answer. An
+// audio-LLM can talk its way to the decode budget on synthesised speech, and
+// giving up there would leave the cache budgeting the largest models by their
+// file size.
 //
 // A cancelled one is not a success and not a failure: it comes back as
 // asr.ErrAborted for the caller to run again when it is out of the way.
-func Bucket(ctx context.Context, m *asr.Model, secs int) (uint64, error) {
+func Bucket(ctx context.Context, m *asr.Model, secs int) (uint64, string, error) {
 	speech, err := Speech()
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	before := m.CompiledKernels()
-	if _, err := m.Transcribe(ctx, Fit(speech, secs)); err != nil && !errors.Is(err, asr.ErrTruncated) {
-		return 0, fmt.Errorf("%ds: %w", secs, err)
+	text, err := m.Transcribe(ctx, Fit(speech, secs))
+	if err != nil && !errors.Is(err, asr.ErrTruncated) {
+		return 0, "", fmt.Errorf("%ds: %w", secs, err)
 	}
-	return m.CompiledKernels() - before, nil
+	return m.CompiledKernels() - before, text, nil
 }
 
 // Run rehearses every bucket and reports what each one cost and compiled, or
@@ -77,7 +85,7 @@ func Run(ctx context.Context, m *asr.Model) (string, error) {
 	var work []string
 	for _, secs := range Buckets(m) {
 		started := time.Now()
-		compiled, err := Bucket(ctx, m, secs)
+		compiled, _, err := Bucket(ctx, m, secs)
 		if err != nil {
 			return strings.Join(work, " "), err
 		}

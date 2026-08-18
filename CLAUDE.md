@@ -210,10 +210,53 @@ exact rather than dense:
 Warming a model is not the whole of being warm. A card left alone drops its
 clocks, so the first utterance after a pause pays to bring them back: on
 granite, 25 seconds of quiet turned a 993ms encode into what costs 27ms back
-to back. The daemon spends the time someone is speaking on a throwaway one
-second run, started when recording starts, which absorbs all of it and hides
-behind the speech. A model is single-threaded, so anything that touches one
-waits for that run first.
+to back. The daemon spends the time someone is speaking on a one second run,
+started when recording starts, which absorbs all of it and hides behind the
+speech. A model is single-threaded, so anything that touches one waits for
+that run first.
+
+A suspend is how a card loses a model wholesale: unless the driver was told
+to save video memory across a sleep, the weights are discarded, and a model
+without them does not fail. It runs its graphs at the usual speed and returns
+nothing, on every utterance, until something reloads it, so every dictation
+after a resume typed nothing and the log said only "0 chars". The daemon
+notices the sleep itself rather than inferring it from the silence:
+CLOCK_BOOTTIME is CLOCK_MONOTONIC plus time spent suspended, so their
+difference is a ledger of sleep that nothing else moves, NTP included, and
+`internal/suspend` reads it on a two second ticker. When it grows, the model
+is reloaded off the main loop, so the reload is under way before anyone is
+back at the keyboard. Every load carries the suspend count it started under,
+and one that was reading the card when the machine slept is closed unopened
+and run again. This needs nothing from logind or D-Bus, and it counts sleeps
+nothing orchestrated, `echo mem` included. On a machine whose driver does
+preserve video memory the reload is redundant and costs a few background
+seconds, which is the conservative side of that bet. A model on the CPU is
+not reloaded at all, since RAM is exactly what a suspend preserves.
+
+The wake run is the backstop behind that, since it is the only audio all
+session whose words are known before it is transcribed. It catches what the
+ticker cannot: a dictation begun inside the reload window, and video memory
+lost to anything that is not a sleep. Silence from it where there were words
+before means the model is gone, and the daemon reloads before transcribing
+the capture it is holding, so the dictation that finds it is not lost; if the
+ticker's reload is already in flight, it is waited out rather than raced with
+a second copy of the same model, which a large one could not fit beside.
+
+Only a model that has answered the clip before is judged, or one with no words
+for it would be reloaded before every dictation. That baseline comes from the
+rehearsal rather than from the first dictation, since the buckets run the same
+speech within a second or two of every load: taken from the first dictation, a
+machine suspended before anyone dictated would leave a model that had never
+answered, so the silence after the resume would not be a change from anything
+and the daemon would stay mute for the rest of the session.
+
+Reloading may not be enough:
+it replaces the model but not the device it lives on, and what was known to
+work was restarting the process. So the reload is checked against the same
+clip, and a reload that is still mute exits, which the unit's `Restart` turns
+into that restart. This one load runs on the main loop rather than off it,
+unlike every other load here, because a model that cannot transcribe leaves
+nothing to answer a keypress with in the meantime.
 
 Past the last bucket nothing is rehearsed. A dictation that long pays one
 compile the first time it meets a shape, and the driver's on-disk cache keeps
@@ -323,6 +366,12 @@ one file another program reads:
 
 - `status` - Pango markup string saying what the daemon is doing, read by the
   bar: REC, TX, and LOAD while a model is being read
+
+Both toggles write it before anything else the press sets off, and TX covers
+everything between the press and the text: waiting out the wake run, reloading
+a model that has gone quiet, and the transcription itself. What the daemon
+happens to be doing when the key arrives is not the light's business, and REC
+through any of that says the mic is live when it is not.
 
 It is there rather than with the others because a bar's config has to name
 the path, and `/run/user/<uid>` cannot be written as `~`; i3status resolves a

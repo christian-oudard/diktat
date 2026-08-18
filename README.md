@@ -276,6 +276,28 @@ restarted after an upgrade:
 Signals sent while the model is still loading are queued, so a keypress during
 startup is not lost.
 
+## Suspend
+
+Suspending the machine discards the card's memory, model included, unless the
+driver was told to preserve it, which stock NVIDIA settings do not. The daemon
+notices the resume within a couple of seconds and reloads the model in the
+background, so dictation works by the time you are back at the keyboard; a
+dictation that catches the reload midway waits for it rather than typing
+nothing.
+
+The driver can be told to keep video memory across a sleep instead, which
+makes the reload redundant (it still runs, and costs a few background
+seconds). On NVIDIA that is the `NVreg_PreserveVideoMemoryAllocations=1`
+module parameter, or on NixOS:
+
+    hardware.nvidia.powerManagement.enable = true;
+
+The cost is at every suspend: the driver writes everything live on the card
+out to a temporary file under `NVreg_TemporaryFilePath` (default `/tmp`,
+tmpfs recommended by NVIDIA), sized up to the whole of VRAM, so suspends get
+slower and need that much space free. With the daemon reloading on its own,
+this is a nicety rather than a requirement.
+
 ## Updating
 
 The keybinding resolves `diktat` at each press, so a new build takes
