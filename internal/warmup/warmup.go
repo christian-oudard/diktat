@@ -10,6 +10,11 @@
 // it has run. A tool that skips warming gets the unmeasured floor instead and
 // cuts audio the daemon would not, which is the difference between measuring
 // the daemon's pipeline and measuring something near it.
+//
+// One bucket at a time rather than only the whole set, because the daemon
+// rehearses between dictations rather than before serving: a model is
+// single-threaded, so a bucket in flight is a bucket the user is waiting
+// behind, and the point where one ends is the only place that can be given up.
 package warmup
 
 import (
@@ -26,53 +31,65 @@ import (
 	"github.com/christian-oudard/diktat/internal/wav"
 )
 
-// Run rehearses each bucket in internal/audio and reports what each one cost
-// and compiled, or "" for a model with nothing to warm.
+// Buckets are the lengths to rehearse this model at, in the order to do it,
+// or none when there is nothing to warm.
+//
+// There is nothing to warm on the CPU: with no shaders to compile, seven warm
+// strategies measured identically to no warmup at all.
+func Buckets(m *asr.Model) []int {
+	if !m.OnGPU() {
+		return nil
+	}
+	return audio.Warm(m.MaxAudio())
+}
+
+// Bucket rehearses one length and reports how many kernels it compiled that
+// no earlier run had.
+//
+// A truncated rehearsal is a success: the graph ran, which is the entire
+// point, and the transcript is thrown away either way. An audio-LLM can talk
+// its way to the decode budget on synthesised speech, and giving up there
+// would leave the cache budgeting the largest models by their file size.
+//
+// A cancelled one is not a success and not a failure: it comes back as
+// asr.ErrAborted for the caller to run again when it is out of the way.
+func Bucket(ctx context.Context, m *asr.Model, secs int) (uint64, error) {
+	speech, err := Speech()
+	if err != nil {
+		return 0, err
+	}
+	before := m.CompiledKernels()
+	if _, err := m.Transcribe(ctx, Fit(speech, secs)); err != nil && !errors.Is(err, asr.ErrTruncated) {
+		return 0, fmt.Errorf("%ds: %w", secs, err)
+	}
+	return m.CompiledKernels() - before, nil
+}
+
+// Run rehearses every bucket and reports what each one cost and compiled, or
+// "" for a model with nothing to warm. It is for a caller with nothing else
+// to do meanwhile; the daemon runs its buckets one at a time instead.
 //
 // Per bucket rather than a total, since the total cannot say which bucket was
 // worth running. A bucket that compiles nothing on every model is one to drop,
 // and a bucket that compiles on a machine where they were never measured is
 // the set being too sparse for that GPU.
-//
-// There is nothing to warm on the CPU: with no shaders to compile, seven warm
-// strategies measured identically to no warmup at all.
-//
-// Cancelling ctx gives up at the next bucket, and says so with ctx.Err(). The
-// caller then has a model that is loaded and only partly rehearsed, which is
-// worth less than nothing to keep: it would meet an unrehearsed shape on the
-// first thing said to it. Bucket boundaries are as fine as this gets, since
-// the library cannot abort a run inside its encoder, and the encoder is where
-// a bucket spends its time.
 func Run(ctx context.Context, m *asr.Model) (string, error) {
-	if !m.OnGPU() {
-		return "", ctx.Err()
-	}
-	speech, err := Speech()
-	if err != nil {
-		return "", err
-	}
-	buckets := audio.Warm(m.MaxAudio())
-	work := make([]string, 0, len(buckets))
-	before := m.CompiledKernels()
-	for _, secs := range buckets {
-		if err := ctx.Err(); err != nil {
+	var work []string
+	for _, secs := range Buckets(m) {
+		started := time.Now()
+		compiled, err := Bucket(ctx, m, secs)
+		if err != nil {
 			return strings.Join(work, " "), err
 		}
-		started := time.Now()
-		// A truncated warmup is a success: the graph ran, which is the entire
-		// point, and the transcript is thrown away either way. An audio-LLM
-		// can talk its way to the decode budget on a rehearsal, and giving up
-		// there would leave the cache budgeting the largest models by their
-		// file size.
-		if _, err := m.Transcribe(Fit(speech, secs)); err != nil && !errors.Is(err, asr.ErrTruncated) {
-			return strings.Join(work, " "), fmt.Errorf("%ds: %w", secs, err)
-		}
-		compiled := m.CompiledKernels() - before
-		before += compiled
-		work = append(work, fmt.Sprintf("%ds:%s/%dk", secs,
-			time.Since(started).Round(time.Millisecond), compiled))
+		work = append(work, Report(secs, time.Since(started), compiled))
 	}
 	return strings.Join(work, " "), nil
+}
+
+// Report is one bucket's line in that summary, shared so the daemon's
+// rehearsal reads the same as the offline one.
+func Report(secs int, took time.Duration, compiled uint64) string {
+	return fmt.Sprintf("%ds:%s/%dk", secs, took.Round(time.Millisecond), compiled)
 }
 
 // sentences are the Harvard sentences from docs/mic-calibration.md, which are

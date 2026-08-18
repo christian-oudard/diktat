@@ -29,6 +29,18 @@ func PIDPath() (string, error) { return sessionFile("daemon.pid") }
 // for a switch.
 func ModelPath() (string, error) { return sessionFile("model") }
 
+// ActivityPath holds what the daemon is busy with, as a word and the model
+// directory it applies to -- "loading <dir>" or "warming <dir>" -- and is
+// absent when it is busy with neither. The daemon writes it; `diktat model`
+// reads it.
+//
+// Separate from ModelPath because the two answer different questions and both
+// are asked at once: that one says which model a dictation right now would
+// use, this one says what is happening to make that better. Without it the
+// menu could not tell "not switched yet" from "not switching", and a model
+// that works but is still rehearsing looked identical to one that was done.
+func ActivityPath() (string, error) { return sessionFile("activity") }
+
 // LastText is the last transcription, kept so `diktat repeat` can type it
 // again.
 //

@@ -29,7 +29,8 @@ engine that is fastest at the current favourite.
   of `--help` rather than keeping a copy, since the copy drifted. The nix build
   stamps the revision and commit date in via ldflags; the date uses a `T`
   rather than a space, since ldflags are joined on spaces.
-- `daemon.go` - keeps the model loaded and warmed, bounds the resident set
+- `daemon.go` - keeps the model loaded, rehearses it between dictations (see
+  Warmup below), bounds the resident set
   (see Model cache below), toggles recording on SIGUSR1, transcribes, types
   via wtype. Runs for the whole
   session; it never starts recording by itself and never exits by itself.
@@ -71,8 +72,11 @@ engine that is fastest at the current favourite.
   here. Picks the discrete GPU when there is one.
 - `internal/wav` - WAV read/write, split out from `internal/audio` so the
   offline tools can read a clip without pulling in malgo.
-- `internal/warmup` - the rehearsal: the synthesised speech, the loop over the
-  buckets, and what each one cost. Shared by the daemon and the offline tool
+- `internal/warmup` - the rehearsal: the synthesised speech, which lengths to
+  rehearse at, and one length at a time. A whole run of them is here too, for
+  a caller with nothing else to do; the daemon drives the lengths itself,
+  because it interleaves them with dictations and only it knows when one is
+  happening. Shared with the offline tool
   because warming is not only about latency; it is also what tells a model how
   much audio it can take in one graph.
 - `internal/xdg` - the two base directories, so that `config` and `ipc` do not
@@ -140,12 +144,36 @@ compiles its shaders on the first graph run, and ggml allocates its compute
 buffers there too. Both are per graph shape, and the shape follows the length
 of the audio, so this is not a cost that is paid once.
 
-After a load the daemon transcribes throwaway speech at each length bucket in
+The daemon transcribes throwaway speech at each length bucket in
 `internal/audio`, 1, 2, 3, 5, 7, 10, 15, 20, 25 and 30 seconds. The backend
 picks its matmul variants in bands rather than per sample, so rehearsing inside
 a band warms the whole band, and the buckets only have to be dense enough to
 enter every band once. Measured from a cold shader cache, they leave arbitrary
 lengths from 0.3s to 29.6s compiling nothing.
+
+It runs between dictations rather than before the first one. A model can
+transcribe as soon as it is loaded, and rehearsing it costs several seconds on
+a large one, so the daemon installs it first and then works through the buckets
+one at a time in the gaps: a bucket is scheduled only while nothing is
+recording and no other model is loading. Starting a recording cancels the
+bucket in flight, which the library honours between decode steps but not
+inside the encoder, so a bucket lets go within tens of milliseconds on an
+audio-LLM and at the end of its encoder on everything else. A cancelled length
+keeps its place and comes round again, since the run may have stopped before
+it compiled anything. Progress is kept per model, so switching to a model
+rehearsed earlier resumes where it left off, and one that finished is not
+rehearsed again.
+
+What that costs is the early dictation. Until a model has run a bucket it has
+no measured rate and cuts audio at the 30 second floor (see Audio length), and
+a length no bucket has reached yet compiles when it is first met. Both are
+paid by whoever dictates in the first seconds after a switch, where before
+they were paid by everyone waiting for the switch to finish.
+
+None of it is on the bar. LOAD is lit while a model is being read and goes out
+when it can transcribe, which is what the bar is for: saying whether dictating
+is possible right now. A rehearsal in the background is not that, so it lives
+in the activity file, which is where `diktat model` reads it.
 
 Which lengths earn a bucket is readable rather than guessed. transcribe.cpp
 reports the names of the kernels a device has compiled, not just how many, and
@@ -234,12 +262,13 @@ that runs, so the limit climbs with use.
 
 A model that has run nothing has no rate, and gets 30 seconds: what the warmup
 rehearses to and what whisper windows to, so every model takes it, and running
-it supplies the measurement. Anything that warms first never meets this floor,
-which is why `internal/warmup` is shared rather than living in the daemon: a
-tool that skips warming cuts audio the daemon would not, and where the cut
-falls changes what comes back. On `bench.wav` a 30 second cut cost
-canary-180m-flash 19 points of word error rate and saved parakeet 4, so a
-benchmark run without warming is not measuring the daemon's pipeline.
+it supplies the measurement. The daemon meets this floor now that it serves
+before it rehearses, but only until the first bucket lands, which is a second
+or so after the switch. A tool that skips warming altogether stays on it, and
+where the cut falls changes what comes back: on `bench.wav` a 30 second cut
+cost canary-180m-flash 19 points of word error rate and saved parakeet 4, so a
+benchmark run without warming is not measuring the daemon's pipeline. That is
+why `internal/warmup` is shared rather than living in the daemon.
 
 ## Model cache
 
@@ -282,6 +311,10 @@ that describe the session:
 - `model` - model directory currently loaded; a request on the way in and a
   statement of fact on the way out
 - `last` - last transcribed text, which is what makes `repeat` possible
+- `activity` - what the daemon is busy with, as `loading <dir>` or
+  `warming <dir>`, and absent when it is busy with neither. `model` cannot
+  answer this: it names the model in use, and the whole question during a
+  switch is what is happening to the one that is not in use yet
 
 An unset `XDG_RUNTIME_DIR` is an error rather than a fallback to `/tmp`: the
 only fallback available is the place these exist to stay out of, and a
@@ -291,7 +324,7 @@ In `$XDG_STATE_HOME/diktat/`, alongside the remembered model choice, is the
 one file another program reads:
 
 - `status` - Pango markup string saying what the daemon is doing, read by the
-  bar
+  bar: REC, TX, and LOAD while a model is being read
 
 It is there rather than with the others because a bar's config has to name
 the path, and `/run/user/<uid>` cannot be written as `~`; i3status resolves a

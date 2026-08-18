@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/christian-oudard/diktat/internal/asr"
+)
 
 // A switch answers the most recent request. These cover which of them needs a
 // load, which needs none, and which has to stop the load already running,
@@ -44,6 +50,37 @@ func TestPlan(t *testing.T) {
 				t.Errorf("plan(%s) = %v, want %v", c.req, got, c.want)
 			}
 		})
+	}
+}
+
+// A model is usable before it is warm, so the rehearsal runs in the gaps
+// between dictations and gets interrupted by them. These cover what happens to
+// a length that was interrupted, which has to be run again: giving it up would
+// leave a hole in the coverage, and counting it would be a lie about a run
+// that may have stopped before it compiled anything.
+func TestRehearsalRecordsProgress(t *testing.T) {
+	w := &rehearsal{buckets: []int{1, 2, 3}}
+
+	if !w.record(bucketResult{secs: 1, took: time.Second}) {
+		t.Fatal("a finished length ended the rehearsal")
+	}
+	if w.next != 1 || w.spent != time.Second || len(w.work) != 1 {
+		t.Errorf("after one length: next %d, spent %s, work %v", w.next, w.spent, w.work)
+	}
+
+	// Interrupted by a dictation. The length comes round again, and nothing
+	// about it is counted.
+	if !w.record(bucketResult{secs: 2, took: 50 * time.Millisecond, err: asr.ErrAborted}) {
+		t.Error("a cancelled length ended the rehearsal")
+	}
+	if w.next != 1 || w.spent != time.Second || len(w.work) != 1 {
+		t.Errorf("a cancelled length was counted: next %d, spent %s, work %v", w.next, w.spent, w.work)
+	}
+
+	// A real failure is not worth retrying: it would fail the same way every
+	// time, which on a card is a busy loop rather than a warmup.
+	if w.record(bucketResult{secs: 2, err: errors.New("no")}) {
+		t.Error("a failing length was left on the list")
 	}
 }
 

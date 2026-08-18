@@ -95,6 +95,10 @@ func runDaemon(args []string) {
 	if err != nil {
 		log.Fatal(err)
 	}
+	activityPath, err = ipc.ActivityPath()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	if err := os.WriteFile(pidPath, []byte(fmt.Sprint(os.Getpid())), 0644); err != nil {
 		log.Fatalf("write pid: %v", err)
@@ -119,20 +123,23 @@ func runDaemon(args []string) {
 	defer rec.Close()
 
 	d := &daemon{
-		model:    model,
-		models:   map[string]*asr.Model{modelDir: model},
-		lru:      []string{modelDir},
-		budget:   cacheBudget(cfg),
-		recorder: rec,
-		cfg:      cfg,
-		modelDir: modelDir,
-		loaded:   make(chan loadResult, 1),
+		model:      model,
+		models:     map[string]*asr.Model{modelDir: model},
+		budget:     cacheBudget(cfg),
+		recorder:   rec,
+		cfg:        cfg,
+		modelDir:   modelDir,
+		loaded:     make(chan loadResult, 1),
+		rehearsals: map[string]*rehearsal{},
+		rehearsed:  make(chan bucketResult, 1),
 	}
 	defer d.closeModels()
-	warm(context.Background(), model)
-	d.publishModel()
+	defer os.Remove(activityPath)
+	// Ready here, not after the rehearsal: the model can transcribe as soon as
+	// it is loaded, and warming it is worth several seconds on a large one.
+	// Those seconds are spent between dictations from now on.
 	log.Printf("Model loaded: %s", model.Arch())
-	setStatus("")
+	d.install(modelDir, model)
 
 	for {
 		select {
@@ -150,11 +157,16 @@ func runDaemon(args []string) {
 				d.mu.Lock()
 				d.recording = false
 				d.mu.Unlock()
+				// Closing the models waits for whatever is running on one,
+				// and a rehearsal length can be half a minute of audio.
+				d.pauseWarming()
 				log.Println("Daemon stopped.")
 				return
 			}
 		case res := <-d.loaded:
 			d.finishLoad(res)
+		case res := <-d.rehearsed:
+			d.finishBucket(res)
 		}
 	}
 }
@@ -183,14 +195,53 @@ type daemon struct {
 	cancel  context.CancelFunc
 	wanted  string
 
-	// waking is closed when the run that woke the GPU at the start of a
-	// recording finishes, and woke is the model it ran on, which is not
-	// necessarily the model in use by the time it lands.
-	waking <-chan struct{}
-	woke   *asr.Model
+	// rehearsals is each resident model's warmup progress, kept per model so
+	// one switched away from halfway through picks up where it left off and
+	// one already warm is not rehearsed again. warming is the one being run
+	// now, and rehearsed carries each finished bucket back to the main loop.
+	rehearsals map[string]*rehearsal
+	warming    *rehearsal
+	rehearsed  chan bucketResult
+
+	// busy is closed when the background run holding the model finishes,
+	// whether that is a warmup bucket or the run that wakes the GPU at the
+	// start of a recording. A model is single-threaded, so it is what
+	// anything else that wants one waits on.
+	busy <-chan struct{}
+	// bucket says a rehearsal length is out with a goroutine and has not been
+	// counted yet. Distinct from busy because settle stops waiting the moment
+	// a run ends, which is before the main loop has read its result: starting
+	// the next length there would leave two results for one index, and the
+	// count would skip a length.
+	bucket bool
 
 	mu        sync.Mutex
 	recording bool
+}
+
+// rehearsal is one model's warmup: the lengths left to run, what the ones
+// already run cost, and how to stop the one running now.
+type rehearsal struct {
+	model   *asr.Model
+	dir     string
+	buckets []int
+	next    int
+	work    []string
+	spent   time.Duration
+	cancel  context.CancelFunc
+}
+
+// bucketResult is one finished rehearsal length. It carries the model it ran
+// on, since by the time it lands the daemon may have moved to another one.
+type bucketResult struct {
+	model *asr.Model
+	// done is the run's own channel, so the daemon can tell whether the run
+	// it is holding is still this one before letting go of it.
+	done     <-chan struct{}
+	secs     int
+	took     time.Duration
+	compiled uint64
+	err      error
 }
 
 // loadResult is a finished background load, successful or not.
@@ -308,20 +359,12 @@ func (d *daemon) switchTo(dir string) {
 		go func() {
 			t0 := time.Now()
 			model, err := asr.Load(dir)
-			if err == nil {
-				// Reading a couple of gigabytes off disk and warming it are
-				// separate costs with separate causes, and a switch that is
-				// taking too long is a question about which one. Warmed says
-				// what the buckets cost; this says what came before it.
-				log.Printf("Loaded %s in %s, warming", model.Name(),
-					time.Since(t0).Round(time.Millisecond))
-				if err = warm(ctx, model); err != nil {
-					// Cancelled. A half-warmed model is not worth keeping:
-					// it would meet an unrehearsed shape on the first thing
-					// said to it, and it holds the card's memory meanwhile.
-					model.Close()
-					model = nil
-				}
+			// Cancelled while it was reading: nobody is waiting for this
+			// model any more, and it is holding memory the one they did ask
+			// for is about to want.
+			if err == nil && ctx.Err() != nil {
+				model.Close()
+				model, err = nil, ctx.Err()
 			}
 			d.loaded <- loadResult{dir: dir, model: model, err: err, took: time.Since(t0)}
 		}()
@@ -375,17 +418,130 @@ func (d *daemon) finishLoad(res loadResult) {
 	if next != "" && next != d.modelDir {
 		d.switchTo(next)
 	}
+	// Nothing rehearsed while the load had the card, so the model in use may
+	// have buckets left. Declines by itself if the line above started another
+	// load.
+	d.warmNext()
+	// The bar is how anyone knows a load is still running, so it has to be put
+	// back on every way one can end. Leaving it to install meant a load that
+	// failed or was cancelled left LOAD lit until something else happened to
+	// write the status, which for a daemon that is idle by design is the next
+	// dictation, minutes later.
+	d.restoreStatus()
 }
 
 // install makes a resident model the one in use. Recording is not
 // interrupted: the capture buffer is independent of the model, so a swap
 // while armed just means the new model transcribes what was captured.
 func (d *daemon) install(dir string, model *asr.Model) {
+	// Whatever is rehearsing is rehearsing the model being replaced, and the
+	// eviction below has to wait for it to let go of the card.
+	d.pauseWarming()
 	d.model, d.modelDir = model, dir
 	d.touch(dir)
 	d.evict()
 	d.publishModel()
+	d.startWarming(dir, model)
 	d.restoreStatus()
+}
+
+// startWarming takes up the rehearsal of the model now in use, from wherever
+// it got to. A model that has run every bucket needs nothing, which is what
+// makes switching back to a resident model free rather than a rehearsal all
+// over again.
+func (d *daemon) startWarming(dir string, model *asr.Model) {
+	// The rehearsal being left keeps its place in the map, so switching back
+	// resumes it rather than starting it again.
+	d.warming = nil
+	w := d.rehearsals[dir]
+	if w == nil {
+		w = &rehearsal{model: model, dir: dir, buckets: warmup.Buckets(model)}
+		d.rehearsals[dir] = w
+	}
+	if w.next == len(w.buckets) {
+		return
+	}
+	d.warming = w
+	d.warmNext()
+}
+
+// warmNext runs one bucket, if this is a moment to run one. It is called from
+// every place that could have made it one, so the rehearsal creeps forward in
+// the gaps between everything else the daemon does.
+//
+// Never while recording: a model is single-threaded, so a bucket in flight is
+// something the transcription of what is being said right now would have to
+// wait behind, and the last bucket is half a minute of audio. Never while
+// another model is loading either, since both want the same card.
+func (d *daemon) warmNext() {
+	w := d.warming
+	if w == nil || d.busy != nil || d.bucket || d.loading != "" || d.isRecording() {
+		return
+	}
+	if w.next == len(w.buckets) {
+		log.Printf("Warmed %s in %s: %s, %s resident, good for %s of audio",
+			w.model.Name(), w.spent.Round(time.Millisecond), strings.Join(w.work, " "),
+			human.Bytes(w.model.Bytes()), w.model.AudioLimit().Round(time.Second))
+		d.warming = nil
+		return
+	}
+	secs := w.buckets[w.next]
+	ctx, cancel := context.WithCancel(context.Background())
+	w.cancel = cancel
+	done := make(chan struct{})
+	d.busy, d.bucket = done, true
+	model := w.model
+	go func() {
+		defer close(done)
+		t0 := time.Now()
+		compiled, err := warmup.Bucket(ctx, model, secs)
+		d.rehearsed <- bucketResult{model: model, done: done, secs: secs,
+			took: time.Since(t0), compiled: compiled, err: err}
+	}()
+}
+
+// finishBucket records what a rehearsal length cost and goes on to the next.
+func (d *daemon) finishBucket(res bucketResult) {
+	d.bucket = false
+	// Only if the daemon is still holding this run. A recording that settled
+	// while the result was in flight may have started a wake run since, and
+	// that one has not finished.
+	if d.busy == res.done {
+		d.busy = nil
+	}
+	if w := d.warming; w != nil && w.model == res.model && !w.record(res) {
+		log.Printf("warmup: %v", res.err)
+		d.warming = nil
+	}
+	d.warmNext()
+	d.restoreStatus()
+}
+
+// record folds a finished length into the rehearsal and says whether it is
+// worth going on with.
+//
+// A length that was cancelled keeps its place: something the user was waiting
+// for wanted the model, and the run may have stopped before the shape it was
+// there to compile. A length that failed ends the rehearsal instead, since a
+// bucket that fails on this model fails every time and retrying it is a busy
+// loop on the card.
+func (w *rehearsal) record(res bucketResult) bool {
+	if res.err != nil {
+		return errors.Is(res.err, asr.ErrAborted)
+	}
+	w.work = append(w.work, warmup.Report(res.secs, res.took, res.compiled))
+	w.spent += res.took
+	w.next++
+	return true
+}
+
+// pauseWarming gives up the bucket in flight without giving up the rehearsal.
+// The length it was on is run again later, since a cancelled run may have
+// stopped before the shape it was there to compile.
+func (d *daemon) pauseWarming() {
+	if d.warming != nil && d.warming.cancel != nil {
+		d.warming.cancel()
+	}
 }
 
 // touch records dir as the most recently used model.
@@ -428,7 +584,7 @@ func overBudget(lru []string, sizes map[string]uint64, budget uint64) []string {
 // context and compute buffers cost more than the weights do for a small
 // model, so a few switches can fill it.
 func (d *daemon) evict() {
-	// Nothing may be closed while the wake run holds a model.
+	// Nothing may be closed while a background run holds a model.
 	d.settle()
 	sizes := make(map[string]uint64, len(d.models))
 	for dir, m := range d.models {
@@ -439,6 +595,9 @@ func (d *daemon) evict() {
 			dir, human.Bytes(sizes[dir]), human.Bytes(d.budget))
 		d.models[dir].Close()
 		delete(d.models, dir)
+		// The rehearsal goes with it: what a model has run is a property of
+		// the loaded model, and loading it again starts from nothing.
+		delete(d.rehearsals, dir)
 		d.lru = slices.DeleteFunc(d.lru, func(s string) bool { return s == dir })
 	}
 }
@@ -464,39 +623,6 @@ func cacheBudget(cfg *config.Config) uint64 {
 	return 4 << 30
 }
 
-// warm rehearses the model and says what it cost. The daemon is resident and
-// loads eagerly, so the shader compiles and buffer allocations are paid here
-// rather than on the first thing the user says. The cost is one throwaway
-// transcription per bucket, a few hundred milliseconds in total once the
-// driver has the shaders on disk, and it runs off the main loop either way.
-// A cancelled warmup is the caller's business rather than a line in the log,
-// so it comes back as an error; anything else is reported here and left to
-// the model that survived it.
-func warm(ctx context.Context, m *asr.Model) error {
-	t0 := time.Now()
-	work, err := warmup.Run(ctx, m)
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	if err != nil {
-		log.Printf("warmup: %v", err)
-	}
-	if work == "" {
-		return nil
-	}
-	// Loading allocated the weights; those runs allocated the buffers, which
-	// are the larger half and grow with the largest bucket. Now is when the
-	// model's real cost is knowable, and when it can say how much longer a
-	// clip it could still take.
-	t := m.Timings()
-	log.Printf("Warmed in %s: %s, %s resident, good for %s of audio (last bucket: mel %s, encode %s, decode %s, other %s)",
-		time.Since(t0).Round(time.Millisecond), work, human.Bytes(m.Bytes()),
-		m.AudioLimit().Round(time.Second),
-		t.Mel.Round(time.Millisecond), t.Encode.Round(time.Millisecond),
-		t.Decode.Round(time.Millisecond), t.Other.Round(time.Millisecond))
-	return nil
-}
-
 func (d *daemon) closeModels() {
 	d.settle()
 	for _, m := range d.models {
@@ -505,9 +631,15 @@ func (d *daemon) closeModels() {
 }
 
 // restoreStatus puts the bar back to whatever is true now that whatever it
-// was showing is over. A load in the background outranks idle but not
+// was showing is over, and says what is happening in the activity file for
+// `diktat model` to read. A load in the background outranks idle but not
 // recording: it is worth knowing a switch is pending, and worth more to know
 // the mic is live.
+//
+// A rehearsal is deliberately not on the bar. The bar says what stops someone
+// dictating, and a model still rehearsing does not: it transcribes, a little
+// slower at a length it has not met yet. The activity file carries it instead,
+// where it is read by whoever asked.
 func (d *daemon) restoreStatus() {
 	switch {
 	case d.isRecording():
@@ -516,6 +648,31 @@ func (d *daemon) restoreStatus() {
 		setStatus(statusLoad)
 	default:
 		setStatus("")
+	}
+	d.publishActivity()
+}
+
+// publishActivity writes what the daemon is busy with, as a word and the
+// model it applies to, or removes the file when it is busy with nothing.
+//
+// Separate from the status file because that one is Pango markup for a bar
+// and names no model. `diktat model` is where someone asks which model they
+// have, and until this it could only answer for the one already in use, which
+// is exactly the wrong half during a switch.
+func (d *daemon) publishActivity() {
+	line := ""
+	switch {
+	case d.loading != "":
+		line = "loading " + d.loading
+	case d.warming != nil:
+		line = "warming " + d.warming.dir
+	}
+	if line == "" {
+		os.Remove(activityPath)
+		return
+	}
+	if err := os.WriteFile(activityPath, []byte(line), 0644); err != nil {
+		log.Printf("activity: %v", err)
 	}
 }
 
@@ -531,6 +688,11 @@ func (d *daemon) startRecording() {
 	d.mu.Lock()
 	d.recording = true
 	d.mu.Unlock()
+	// Whatever the rehearsal is on, this utterance wants the model more. The
+	// bucket gives up where it can, which is not instantly, and the wake run
+	// below stands aside if it is still going: a bucket is a graph run too,
+	// so it wakes the card just as well.
+	d.pauseWarming()
 	d.wake()
 	setStatus(statusRec)
 	log.Println("Recording...")
@@ -546,7 +708,7 @@ func (d *daemon) startRecording() {
 // and it is thrown away. Errors are ignored: this is an optimisation, and the
 // transcription that follows will report anything real.
 func (d *daemon) wake() {
-	if !d.model.OnGPU() || d.waking != nil {
+	if !d.model.OnGPU() || d.busy != nil {
 		return
 	}
 	speech, err := warmup.Speech()
@@ -554,21 +716,23 @@ func (d *daemon) wake() {
 		return
 	}
 	done := make(chan struct{})
-	d.waking, d.woke = done, d.model
+	d.busy = done
+	model := d.model
 	go func() {
 		defer close(done)
-		d.woke.Transcribe(warmup.Fit(speech, 1))
+		model.Transcribe(context.Background(), warmup.Fit(speech, 1))
 	}()
 }
 
-// settle waits for a wake run to finish. A model is single-threaded, and the
-// wake holds one, so nothing else may touch a model until it is done.
+// settle waits for the background run holding the model to finish. A model is
+// single-threaded, and both the wake run and a warmup bucket hold one, so
+// nothing else may touch a model until whichever it is has let go.
 func (d *daemon) settle() {
-	if d.waking == nil {
+	if d.busy == nil {
 		return
 	}
-	<-d.waking
-	d.waking, d.woke = nil, nil
+	<-d.busy
+	d.busy = nil
 }
 
 func (d *daemon) stopRecording() {
@@ -577,9 +741,14 @@ func (d *daemon) stopRecording() {
 	d.mu.Lock()
 	d.recording = false
 	d.mu.Unlock()
+	// However this ends, the bar goes back to what is true afterwards and the
+	// rehearsal picks up where the recording interrupted it. Both were easy
+	// to miss on one of the ways out: a silent capture used to write an empty
+	// status directly, which turned a load still running into an idle bar.
+	defer d.restoreStatus()
+	defer d.warmNext()
 
 	if len(samples) == 0 {
-		d.restoreStatus()
 		log.Println("No audio.")
 		return
 	}
@@ -602,7 +771,6 @@ func (d *daemon) stopRecording() {
 	// transcribe silence, and the inventions cost more than the check does.
 	if silent {
 		log.Printf("Nothing to transcribe: the capture is silent.")
-		setStatus("")
 		return
 	}
 
@@ -621,10 +789,9 @@ func (d *daemon) stopRecording() {
 	}
 	var parts []string
 	for _, chunk := range chunks {
-		part, err := d.model.Transcribe(audio.Pad(audio.Floats(chunk, gain)))
+		part, err := d.model.Transcribe(context.Background(), audio.Pad(audio.Floats(chunk, gain)))
 		if err != nil {
 			log.Printf("transcribe: %v", err)
-			d.restoreStatus()
 			return
 		}
 		if part != "" {
@@ -666,8 +833,6 @@ func (d *daemon) stopRecording() {
 			log.Printf("type: %v", err)
 		}
 	}
-
-	d.restoreStatus()
 }
 
 func (d *daemon) appendHistory(text string) {
@@ -698,10 +863,9 @@ func (d *daemon) appendHistory(text string) {
 	})
 }
 
-// statusPath and modelPath are resolved at startup and used from every corner
-// of the daemon, including the signal handlers, which have no daemon value to
-// hang them off.
-var statusPath, modelPath string
+// These are resolved at startup and used from every corner of the daemon,
+// including the signal handlers, which have no daemon value to hang them off.
+var statusPath, modelPath, activityPath string
 
 func setStatus(s string) {
 	_ = os.WriteFile(statusPath, []byte(s), 0644)

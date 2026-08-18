@@ -66,19 +66,40 @@ func listModels() string {
 	if current == "" {
 		current = models.Resolve(config.StartModel())
 	}
+	// What it is doing about it, which the model in use cannot say: a switch
+	// to a 1.8 GiB model is tens of seconds where the menu would otherwise
+	// look like nothing had happened.
+	doing, subject := activity()
 
 	// The number is right-aligned because the menu is past ten entries, and a
 	// ragged one shifts every column after it on the rows that need it most.
 	fmt.Printf("  %2s %-28s %8s  %s  %s\n",
 		"#", "Name", "Size", "Downloaded", "Languages")
-	inUse := ""
+	inUse, busy := "", subject
 	for i, s := range models.Catalog {
 		mark := " "
-		if s.Path() == current {
+		switch s.Path() {
+		case current:
 			mark, inUse = "*", s.Name
+		case subject:
+			// A model on its way in, which is not the one in use and has its
+			// own mark rather than borrowing that one.
+			mark = ">"
+		}
+		if s.Path() == subject {
+			busy = s.Name
 		}
 		fmt.Printf("%s %2d %-28s %8s  %s  %s\n", mark, i+1, s.Name, s.Size(),
 			tick(s.Downloaded(), "Downloaded"), s.Languages())
+	}
+	switch doing {
+	case "loading":
+		fmt.Printf("\n> loading %s\n", busy)
+	case "warming":
+		// Said plainly, because the honest answer to "is it ready" here is
+		// yes: a rehearsal costs the first dictation at an unseen length, not
+		// the ability to have one.
+		fmt.Printf("\nwarming %s, which is usable meanwhile\n", busy)
 	}
 	// A model outside the menu gets no marker, so there would otherwise be
 	// nothing anywhere saying what is in use. Say when it is not there: a
@@ -107,11 +128,24 @@ func tick(yes bool, header string) string {
 }
 
 // loadedModel is what the running daemon has, or "" if none is running.
-func loadedModel() string {
+func loadedModel() string { return daemonFile(ipc.ModelPath) }
+
+// activity is what the daemon is doing about a model that is not the one in
+// use yet: the word it published and the model it applies to, or "" and "".
+func activity() (string, string) {
+	word, dir, _ := strings.Cut(daemonFile(ipc.ActivityPath), " ")
+	return word, dir
+}
+
+// daemonFile reads one of the daemon's runtime files, and reads nothing when
+// there is no daemon: these outlive a process that was killed outright, and a
+// menu that says a dead daemon is loading something is worse than one that
+// says nothing.
+func daemonFile(name func() (string, error)) string {
 	if ipc.ReadPID() == 0 {
 		return ""
 	}
-	path, err := ipc.ModelPath()
+	path, err := name()
 	if err != nil {
 		return ""
 	}
@@ -158,15 +192,20 @@ func switchModel(nameOrNumber string) {
 		log.Printf("could not remember the choice: %v", err)
 	}
 
-	fmt.Printf("using %s\n", remembered)
-
 	// A daemon that is up gets told; one that is not will read the choice when
-	// it starts. Either way the answer to "which model" is the same, so which
-	// of the two happened is not worth saying.
+	// it starts.
 	pid := ipc.ReadPID()
 	if pid == 0 {
+		fmt.Printf("using %s\n", remembered)
 		return
 	}
+	// What the daemon has now, read before the request overwrites it, so this
+	// can say which of the two things is about to happen. A 1.8 GiB model
+	// takes tens of seconds to become the model in use, and saying "using"
+	// while the daemon was still reading it off disk was the only word anyone
+	// got: the bar's LOAD light is the other half of the answer, and it is
+	// not on screen yet when this prints.
+	loaded := loadedModel()
 	modelPath, err := ipc.ModelPath()
 	if err != nil {
 		log.Fatal(err)
@@ -177,6 +216,14 @@ func switchModel(nameOrNumber string) {
 	if err := syscall.Kill(pid, syscall.SIGHUP); err != nil {
 		log.Fatalf("signal daemon: %v", err)
 	}
+	if path == loaded {
+		fmt.Printf("using %s\n", remembered)
+		return
+	}
+	// Switching rather than loading, because a model this daemon has held
+	// since an earlier switch is installed at once and never loaded. Which of
+	// those it is only the daemon knows, and the bar is where it says so.
+	fmt.Printf("switching to %s, the bar shows LOAD until it can transcribe\n", remembered)
 }
 
 // confirm asks before spending someone's bandwidth, since a model runs to a

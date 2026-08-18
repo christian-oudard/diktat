@@ -13,6 +13,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -128,7 +129,7 @@ func run(m *asr.Model, stage, kind string, secs float64, pass int, speech []floa
 	// Kernels are only ever appended, so what this run built is the tail.
 	kernels := m.CompiledKernelNames()
 	t0 := time.Now()
-	if _, err := m.Transcribe(clip); err != nil {
+	if _, err := m.Transcribe(context.Background(), clip); err != nil {
 		log.Fatalf("%s %s: %v", stage, kind, err)
 	}
 	wall := time.Since(t0)

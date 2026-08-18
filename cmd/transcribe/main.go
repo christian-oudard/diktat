@@ -80,7 +80,7 @@ func main() {
 		var parts []string
 		fail := false
 		for _, chunk := range audio.Chunk(stored, int(limit.Seconds())*audio.SampleRate) {
-			part, err := model.Transcribe(audio.Pad(audio.Floats(chunk, gain)))
+			part, err := model.Transcribe(context.Background(), audio.Pad(audio.Floats(chunk, gain)))
 			if err != nil {
 				log.Printf("%s: transcribe: %v", path, err)
 				fail = true

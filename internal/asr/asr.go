@@ -5,6 +5,7 @@ package asr
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -43,6 +44,11 @@ type Model struct {
 	longest  time.Duration
 	// timings is where the last transcription went.
 	timings Timings
+	// mu guards the three above. A run is single-threaded, but it is not
+	// always on the thread that asks what the model costs: the daemon
+	// rehearses in the background and its main loop goes on reporting the
+	// cache size meanwhile.
+	mu sync.Mutex
 }
 
 // sampleRate is the rate every model here is fed at. Named rather than
@@ -102,7 +108,11 @@ func Load(path string) (*Model, error) {
 // graph run of a shape and keeps them at the high-water mark, and for every
 // family here except whisper that mark grows with the length of the audio. One
 // four minute dictation took canary-180m-flash, a 151 MiB model, to 4.3 GiB.
-func (m *Model) Bytes() uint64 { return m.resident + m.graph }
+func (m *Model) Bytes() uint64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.resident + m.graph
+}
 
 // AudioLimit is the longest clip to hand this model in one run: the shorter of
 // what it says it accepts and what the device can still afford. 0 means
@@ -155,7 +165,10 @@ func (m *Model) fits() time.Duration {
 		// measured against, and neither is the one that dies.
 		return 0
 	}
-	if fit := fitsIn(free/4, m.graph, m.longest); fit > 0 {
+	m.mu.Lock()
+	graph, longest := m.graph, m.longest
+	m.mu.Unlock()
+	if fit := fitsIn(free/4, graph, longest); fit > 0 {
 		return fit
 	}
 	return unmeasuredLimit
@@ -207,8 +220,17 @@ func (m *Model) free() uint64 {
 // it the expected answer to a warmup, and a real problem for an utterance.
 var ErrTruncated = transcribe.ErrOutputTruncated
 
+// ErrAborted means the run gave up because its context was cancelled. The
+// caller asked for that, so it is not a failure of the model: a rehearsal
+// that meets it is one to run again later, not one to give up on.
+var ErrAborted = transcribe.ErrAborted
+
 // Timings is where the last transcription's time went.
-func (m *Model) Timings() Timings { return m.timings }
+func (m *Model) Timings() Timings {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.timings
+}
 
 // MaxAudio is the longest clip this model will take in one run, or 0 when it
 // has no practical limit because the family chunks internally. It is the
@@ -367,7 +389,12 @@ func (m *Model) Close() {
 // Transcribe runs the model over 16 kHz mono samples. Whisper pads every
 // utterance to a 30 second window internally, so its cost is roughly flat
 // however long the utterance was; moonshine encodes only what it was given.
-func (m *Model) Transcribe(audio []float32) (string, error) {
+//
+// Cancelling ctx gives up between decode steps and returns ErrAborted, which
+// is what lets a background rehearsal get out of the way of something the
+// user is waiting for. It is not immediate: the encoder cannot be interrupted,
+// and on everything but an audio-LLM that is where the time goes.
+func (m *Model) Transcribe(ctx context.Context, audio []float32) (string, error) {
 	if len(audio) == 0 {
 		return "", nil
 	}
@@ -377,24 +404,40 @@ func (m *Model) Transcribe(audio []float32) (string, error) {
 	// drops by is this model's graph, attributable to it rather than to
 	// everything loaded since.
 	clip := time.Duration(len(audio)) * time.Second / sampleRate
+	m.mu.Lock()
 	grow := clip > m.longest
+	m.mu.Unlock()
 	var before uint64
 	if grow {
 		before = m.free()
 	}
 	t0 := time.Now()
-	res, err := m.s.Run(context.Background(), audio, nil)
+	res, err := m.s.Run(ctx, audio, nil)
+	if grow {
+		// Counted even when the run was aborted, because ggml allocates the
+		// graph before it runs it, so the memory went whether or not a
+		// transcript came back. The length it bought is not counted, though:
+		// an abort may have stopped short of the shape this clip would have
+		// reached, and charging its full cost to a shorter clip errs towards
+		// a lower limit, which is the safe way to be wrong.
+		after := m.free()
+		m.mu.Lock()
+		if before > after {
+			m.graph += before - after
+		}
+		if err == nil || errors.Is(err, ErrTruncated) {
+			m.longest = clip
+		}
+		m.mu.Unlock()
+	}
 	if err != nil {
 		return "", err
 	}
-	if grow {
-		if after := m.free(); before > after {
-			m.graph += before - after
-		}
-		m.longest = clip
-	}
-	m.timings = Timings{Mel: res.Timings.Mel, Encode: res.Timings.Encode, Decode: res.Timings.Decode}
-	m.timings.Other = time.Since(t0) - m.timings.Mel - m.timings.Encode - m.timings.Decode
+	t := Timings{Mel: res.Timings.Mel, Encode: res.Timings.Encode, Decode: res.Timings.Decode}
+	t.Other = time.Since(t0) - t.Mel - t.Encode - t.Decode
+	m.mu.Lock()
+	m.timings = t
+	m.mu.Unlock()
 	return dropAnnotations(res.Text), nil
 }
 
