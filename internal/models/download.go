@@ -55,7 +55,16 @@ func get(url, dest string, progress io.Writer) error {
 		return err
 	}
 	bar := newProgress(progress, filepath.Base(dest), resp.ContentLength)
-	if _, err := io.Copy(f, io.TeeReader(resp.Body, bar)); err != nil {
+	got, err := io.Copy(f, io.TeeReader(resp.Body, bar))
+	if err == nil && resp.ContentLength >= 0 && got != resp.ContentLength {
+		// A body that ended early without saying so. It happens, and nothing
+		// downstream notices: the file is a valid path with a valid name, and
+		// the only symptom is the library refusing to load a GGUF whose last
+		// tensor runs off the end of it, hours or weeks later.
+		err = fmt.Errorf("%s: got %s of %s", filepath.Base(dest),
+			human.Bytes(uint64(got)), human.Bytes(uint64(resp.ContentLength)))
+	}
+	if err != nil {
 		f.Close()
 		os.Remove(tmp)
 		return err

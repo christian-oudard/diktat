@@ -18,10 +18,77 @@ import (
 	transcribe "github.com/handy-computer/transcribe.cpp/bindings/go"
 )
 
-// quiet drops the library's own narration. It logs model loading to stderr
-// otherwise, and the daemon has its own log while the offline tools print
-// results. Once per process, since the sink is global.
+// quiet takes the library's narration off stderr, which is where it goes
+// otherwise: it describes every model load in detail, and the daemon has its
+// own log while the offline tools print results. Once per process, since the
+// sink is global.
+//
+// Dropped is not the same as silenced, though. What it says when a load fails
+// is the only description of why there is, and the error the API returns is
+// four words: "canary-qwen-2.5b-Q5_K_M.gguf: gguf load error" is not something
+// anyone can act on. So the complaints are kept, and a failed load quotes the
+// ones it caused.
 var quiet sync.Once
+
+// complaints is the library's last few warnings and errors, oldest first.
+// Bounded because nothing empties it: a run that warns on every utterance
+// would otherwise grow it for the life of the daemon.
+var complaints struct {
+	sync.Mutex
+	lines []string
+	// seen counts every line ever kept, which lines cannot: a mark taken
+	// against its length would still be in range after the ring had rolled
+	// past it, and the lines it was taken to exclude would read as included.
+	seen int
+}
+
+const keptComplaints = 8
+
+func keepComplaints() {
+	transcribe.SetLogHandler(func(level transcribe.LogLevel, msg string) {
+		if level != transcribe.LogWarn && level != transcribe.LogError {
+			return
+		}
+		noteComplaint(msg)
+	})
+}
+
+func noteComplaint(msg string) {
+	msg = strings.TrimSpace(msg)
+	if msg == "" {
+		return
+	}
+	// Messages arrive on whichever thread produced them, including from
+	// inside a run, so this is not the main loop's alone.
+	complaints.Lock()
+	defer complaints.Unlock()
+	complaints.lines = append(complaints.lines, msg)
+	complaints.seen++
+	if len(complaints.lines) > keptComplaints {
+		complaints.lines = complaints.lines[len(complaints.lines)-keptComplaints:]
+	}
+}
+
+// complaintMark is where the log stands now, to read what an operation
+// complained about back from afterwards.
+func complaintMark() int {
+	complaints.Lock()
+	defer complaints.Unlock()
+	return complaints.seen
+}
+
+// since renders what was complained about after mark, for the end of an error
+// message. Kept to what the ring still holds, so a very noisy operation
+// reports its last few rather than nothing.
+func since(mark int) string {
+	complaints.Lock()
+	defer complaints.Unlock()
+	n := min(complaints.seen-mark, len(complaints.lines))
+	if n <= 0 {
+		return ""
+	}
+	return ": " + strings.Join(complaints.lines[len(complaints.lines)-n:], "; ")
+}
 
 // Model is a loaded recognizer. It holds the weights and the decoder state,
 // so it is worth keeping resident, and it is single-threaded.
@@ -73,16 +140,20 @@ func Load(path string) (*Model, error) {
 	if err != nil {
 		return nil, fmt.Errorf("model: %w", err)
 	}
-	quiet.Do(func() { transcribe.SetLogHandler(nil) })
+	quiet.Do(keepComplaints)
 
 	opts, gpu, err := placement()
 	if err != nil {
 		return nil, err
 	}
 	before := deviceFree(opts)
+	mark := complaintMark()
 	s, err := transcribe.Open(path, opts, nil)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", filepath.Base(path), err)
+		// With what the library said about it. "gguf load error" on its own
+		// says a file did not load and nothing about which part of it the
+		// library could not read, which is the whole question.
+		return nil, fmt.Errorf("%s: %w%s", filepath.Base(path), err, since(mark))
 	}
 	m := &Model{
 		s:        s,
@@ -371,7 +442,7 @@ func (m *Model) Arch() string {
 // drawing on it: on this laptop 1.4 GB of the 8 was spoken for before diktat
 // started, and a budget struck against the 8 counts it twice.
 func DeviceFree() uint64 {
-	quiet.Do(func() { transcribe.SetLogHandler(nil) })
+	quiet.Do(keepComplaints)
 	opts, _, err := placement()
 	if err != nil {
 		return 0

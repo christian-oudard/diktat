@@ -112,7 +112,11 @@ func runDaemon(args []string) {
 	// has loaded nothing.
 	model, err := asr.Load(modelDir)
 	if err != nil {
-		log.Fatalf("load model: %v", err)
+		// The remembered choice is not undone by a load that fails, so this
+		// is a daemon that will fail the same way at every start until
+		// someone changes it or replaces the file. Say how to do both.
+		log.Fatalf("load model: %v\nPick another with `diktat model`, or refetch this one:\n  rm %s && diktat model %s",
+			err, modelDir, name)
 	}
 	defer os.Remove(modelPath)
 
