@@ -432,7 +432,19 @@ everything else running.
 
 The log is not among these at all. It goes to stderr, which is the journal
 when systemd runs the daemon and the terminal when a person does, and it
-records lengths and timings, never the text. Nothing configures that routing:
+records lengths and timings, never the text.
+
+Two levels, split by what a line answers. What happened is on by default: the
+model in use, a switch, a suspend, anything that failed. How it happened is
+behind `DIKTAT_DEBUG`, spelled like `DIKTAT_GPU` because that is the only other
+knob here: audio levels, per-stage transcription timings, the warmup's
+per-length breakdown, and a load's split into waking, reading and opening.
+The split is by frequency as much as by kind. Dictating happens several times
+a minute and put three lines in the log each time, so the switch that took two
+minutes was somewhere above a screenful of level meters. A load keeps its total
+at the default level for the same reason inverted: it is rare, the user asked
+for it, and a slow one has to be visible without anyone knowing to turn
+anything on. Nothing configures that routing:
 systemd connects a service's stderr to the journal itself. It also stamps
 every line it captures, so the daemon stamps its own only when nothing else
 will, which `JOURNAL_STREAM` answers, since systemd sets it on exactly the

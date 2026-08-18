@@ -108,6 +108,17 @@ The daemon logs to stderr, so under systemd the log is the journal:
 
     $ journalctl --user -u diktat -f
 
+By default it logs what happened: the model it started on, model switches,
+suspends, and anything that failed. How it happened, meaning audio levels,
+per-stage transcription timings, the warmup's per-length breakdown and the
+split of a load into waking, reading and opening, is off, since dictating
+happens several times a minute and it buried everything else. Set
+`DIKTAT_DEBUG=1` to turn it on:
+
+    $ systemctl --user edit diktat    # [Service] Environment=DIKTAT_DEBUG=1
+
+Neither level ever logs what you dictated.
+
 A config file that does not parse stops the daemon rather than starting it on
 defaults, with the reason on the last line and exit status 78 (EX_CONFIG).
 The unit does not restart on that status, so the message stays where it can be

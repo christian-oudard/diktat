@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"log"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -266,5 +269,28 @@ func TestLogFlags(t *testing.T) {
 	t.Setenv("JOURNAL_STREAM", "")
 	if got := logFlags(); got != log.LstdFlags {
 		t.Errorf("logFlags() = %d in a terminal, want %d", got, log.LstdFlags)
+	}
+}
+
+// Dictating is the common case and it happened several times a minute, so the
+// lines describing how a transcription went buried the ones saying a switch or
+// a suspend had happened. Those are debug now, and the gate is read once.
+func TestDebugf(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	defer log.SetOutput(os.Stderr)
+
+	debugEnabled = false
+	debugf("mel 8ms encode 241ms")
+	if buf.Len() != 0 {
+		t.Errorf("debug line logged by default: %q", buf.String())
+	}
+
+	debugEnabled = true
+	defer func() { debugEnabled = false }()
+	debugf("mel 8ms encode 241ms")
+	if got := strings.TrimSpace(buf.String()); got != "mel 8ms encode 241ms" {
+		t.Errorf("debugf with DIKTAT_DEBUG set = %q, want the line", got)
 	}
 }

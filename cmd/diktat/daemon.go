@@ -138,7 +138,8 @@ func runDaemon(args []string) {
 	// Ready here, not after the rehearsal: the model can transcribe as soon as
 	// it is loaded, and warming it is worth several seconds on a large one.
 	// Those seconds are spent between dictations from now on.
-	log.Printf("Model loaded: %s (%s)", model.Arch(), model.LoadTimings())
+	log.Printf("Model loaded: %s", model.Arch())
+	debugf("Load: %s", model.LoadTimings())
 	d.install(modelDir, model)
 
 	// The look for a suspend. Two seconds so the reload is under way before
@@ -480,7 +481,7 @@ func (d *daemon) dropLoad(next string) {
 		return
 	}
 	if d.cancel != nil {
-		log.Printf("Cancelling the load of %s", d.loading)
+		debugf("Cancelling the load of %s", d.loading)
 		d.cancel()
 		d.cancel = nil
 	}
@@ -511,10 +512,14 @@ func (d *daemon) finishLoad(res loadResult) {
 		}
 	default:
 		d.install(res.dir, res.model)
-		log.Printf("Model now %s in %s (woke %s, %s), %s resident",
+		// The total stays at the default level, since a switch is something
+		// the user asked for and a two minute one has to be visible without
+		// anyone knowing to turn anything on. Which part of it was slow is the
+		// next question rather than the first, so the split waits for debug.
+		log.Printf("Model now %s in %s, %s resident",
 			res.model.Arch(), res.took.Round(time.Millisecond),
-			res.woke.Round(time.Millisecond), res.model.LoadTimings(),
 			human.Bytes(res.model.Bytes()))
+		debugf("Load: woke %s, %s", res.woke.Round(time.Millisecond), res.model.LoadTimings())
 	}
 	// A request made during the load, unless it asked for what the load just
 	// installed, which is what asking twice for a slow model looks like.
@@ -581,7 +586,7 @@ func (d *daemon) warmNext() {
 		return
 	}
 	if w.next == len(w.buckets) {
-		log.Printf("Warmed %s in %s: %s, %s resident, good for %s of audio",
+		debugf("Warmed %s in %s: %s, %s resident, good for %s of audio",
 			w.model.Name(), w.spent.Round(time.Millisecond), strings.Join(w.work, " "),
 			human.Bytes(w.model.Bytes()), w.model.AudioLimit().Round(time.Second))
 		d.warming = nil
@@ -732,7 +737,7 @@ func (d *daemon) startRecording() {
 	// so it wakes the card just as well.
 	d.pauseWarming()
 	d.wake()
-	log.Println("Recording...")
+	debugf("Recording...")
 }
 
 // wake spends the time someone is speaking on a throwaway run, because a card
@@ -908,7 +913,7 @@ func (d *daemon) stopRecording() {
 	// Audio duration is derived from the sample count at the rate we asked the
 	// device for. If it drifts from the wall clock, the device is not actually
 	// giving us that rate, and the model is seeing time-stretched speech.
-	log.Printf("Transcribing %.1fs (wall %.1fs, peak %.3f rms %.4f gain %.1fx)...",
+	debugf("Transcribing %.1fs (wall %.1fs, peak %.3f rms %.4f gain %.1fx)...",
 		float64(len(samples))/float64(audio.SampleRate), time.Since(d.startedAt).Seconds(),
 		peak, rms, gain)
 
@@ -949,19 +954,21 @@ func (d *daemon) stopRecording() {
 	// length will be. Expected past the last warm bucket, a bug below it, and
 	// named either way, since the name says which variant the buckets missed.
 	if compiled := d.model.CompiledKernelNames()[len(kernels):]; len(compiled) > 0 {
-		log.Printf("Compiled %d kernels mid-transcription, on %.1fs of audio: %s",
+		debugf("Compiled %d kernels mid-transcription, on %.1fs of audio: %s",
 			len(compiled), float64(len(samples))/float64(audio.SampleRate),
 			strings.Join(compiled, " "))
 	}
-	// The text itself is deliberately not logged: the log is a long-lived file
-	// in /tmp and everything dictated would accumulate in it, which is also
-	// why it can stay there. Length is enough to tell "heard nothing" from
-	// "heard something" when reading the log.
-	// The breakdown separates the model's own work from everything around
-	// it, which is what tells a slow model from a cold one: a first
-	// utterance that spends its time in encode is still compiling shaders.
+	// The text itself is deliberately not logged, whatever the level: this
+	// goes to the journal, which keeps it across restarts, and everything ever
+	// dictated would accumulate there. Length is enough to tell "heard
+	// nothing" from "heard something".
+	//
+	// The breakdown separates the model's own work from everything around it,
+	// which is what tells a slow model from a cold one: a first utterance that
+	// spends its time in encode is still compiling shaders. That is a question
+	// for someone debugging, so it is not asked several times a minute.
 	tm := d.model.Timings()
-	log.Printf("Transcribed in %s (mel %s, encode %s, decode %s, other %s): %d chars",
+	debugf("Transcribed in %s (mel %s, encode %s, decode %s, other %s): %d chars",
 		time.Since(t0).Round(time.Millisecond), tm.Mel.Round(time.Millisecond),
 		tm.Encode.Round(time.Millisecond), tm.Decode.Round(time.Millisecond),
 		tm.Other.Round(time.Millisecond), len(text))
@@ -1006,6 +1013,22 @@ func (d *daemon) appendHistory(text string) {
 		"ts":   time.Now().UTC().Format(time.RFC3339Nano),
 		"text": text,
 	})
+}
+
+// debugEnabled turns on the lines that describe how the daemon did something
+// rather than what it did. Off by default: dictating is the common case and it
+// happened several times a minute, so the interesting lines, a switch, a
+// suspend, anything that failed, were buried under level meters and per-stage
+// timings from every utterance. DIKTAT_DEBUG brings them back, spelled like
+// DIKTAT_GPU because that is the only other knob here.
+var debugEnabled = os.Getenv("DIKTAT_DEBUG") != ""
+
+// debugf logs a line worth having when something is wrong and worth nothing
+// the rest of the time.
+func debugf(format string, v ...any) {
+	if debugEnabled {
+		log.Printf(format, v...)
+	}
 }
 
 // logFlags stamps the log with the time, unless something downstream is
