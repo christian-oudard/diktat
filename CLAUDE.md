@@ -215,6 +215,41 @@ started when recording starts, which absorbs all of it and hides behind the
 speech. A model is single-threaded, so anything that touches one waits for
 that run first.
 
+Loading a model pays the same toll and far more of it, since a load is
+thousands of small transfers and none is long enough to clock the card up by
+itself. On a laptop RTX 4070, parakeet-tdt-0.6b loaded in 183ms straight after
+a rehearsal and 1m50.8s after thirty seconds of quiet, everything else equal.
+So `startLoad` runs `wakeRun` first and the load waits for it. Nothing to wake
+it with is fine: a bucket in flight means the card is already busy, and no
+model at all means this is the session's first load.
+
+Nothing here sleeps. The rehearsal is a graph run on one second of synthesised
+speech, and the load waits for that run to finish, not for a timer. A second
+of audio is not a second of wall clock: it costs ~130ms on a card already at
+its clocks and ~880ms on one that is not, which is the whole point, since the
+cost is whatever that card needs rather than a number anyone picked.
+
+The clip is a second long because that is the shortest warmup bucket. Clips of
+125ms, 250ms and 500ms wake the card just as well and cost the same ~880ms,
+since what is paid is the hardware transition rather than the audio, but a
+shorter clip is a graph shape no bucket rehearsed, so the first one compiles.
+
+Do not replace the graph with something cheaper; two obvious candidates are
+measured and neither works. `transcribe.Devices()` resumes the device from
+D3cold for 694ms, and the load after it still takes 1m51s, so `asr.Load`'s own
+device query has always been in front of every slow load. The PCI core's
+`power_state` is exact and free and answers the wrong question for the same
+reason: the card sits in D0 at idle clocks. Clocks come up only under load and
+nothing portable reports them, so running the graph is what raises them, and
+its duration is the only reading available. That duration is logged as `woke`
+beside `read` and `open`, which is what says whether a slow load was a cold
+card on hardware nobody here has.
+
+The ~900ms cannot be made cheaper, only moved: a dictation hides it behind the
+speech and a switch cannot, so a switch costs about 1.5s. Holding the clocks up
+instead is machine-wide and costs idle power, so the README names it as the
+operator's choice.
+
 A suspend is how a card loses a model wholesale: unless the driver was told
 to save video memory across a sleep, the weights are discarded, and a model
 without them does not fail. It runs its graphs at the usual speed and returns
@@ -343,16 +378,15 @@ compute buffers are added as transcriptions grow them. A backend reporting no
 memory falls back to the file size.
 
 How long it took is split the same way. A load used to be one number, and a
-523 MiB model that took 1m59s of it was blamed on the card being full, then on
-the weights going over PCIe a tensor at a time, before anyone could say which
-half of the load it was even in; both were wrong, and neither was cheap to
-rule out. So `asr.Load` reads the file through once and discards it before
-handing the path to the library, which reads it again from the page cache that
-read just filled. The two numbers separate waiting for a disk from everything
-the library does afterwards, which is the only seam visible from here:
-`transcribe.Open` is one call and logs nothing timed. The extra read is close
-to free on a warm cache, and on a cold one it is the same read either way,
-only now it is the half that has a number on it.
+523 MiB model that took 1m59s of it was blamed on the card being full and then
+on the weights going over PCIe a tensor at a time, before anyone could say
+which half of the load it was even in. So `asr.Load` reads the file through
+once and discards it before handing the path to the library, which reads it
+again from the page cache that read just filled. The two numbers separate
+waiting for a disk from everything the library does afterwards, which is the
+only seam visible from here: `transcribe.Open` is one call and logs nothing
+timed. The extra read is close to free on a warm cache, and on a cold one it is
+the same read either way, only now it is the half that has a number on it.
 
 ## IPC files
 

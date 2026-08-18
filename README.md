@@ -236,6 +236,38 @@ its size.
 A switch does not persist across a daemon restart; the daemon always comes
 back on the model named in the config, or on the default.
 
+### Why a switch pauses for about a second
+
+A GPU left alone powers down: clocks drop and the PCIe link falls back to Gen1,
+which NVIDIA documents as normal (`nvidia-smi` reports link generation "may be
+reduced when the GPU is not in use"). Loading a model is almost entirely
+host-to-device transfer, so it is hit hard by this. Measured on a laptop RTX
+4070, the same model loaded in 0.7 seconds on a card that had just been working
+and in over two minutes on one left idle for half a minute.
+
+So before loading, the daemon transcribes one second of throwaway synthesised
+speech, which brings the card back up. It waits for that to finish rather than
+waiting out any fixed delay. On a card already working it takes about 130ms; on
+one that has gone to sleep it takes about 0.9 seconds, and that difference is
+the hardware waking rather than anything diktat does. It is why a switch takes
+a second or so rather than being instant. Dictation pays the same cost but you
+never see it, because the throwaway run happens while you are still talking.
+
+If you would rather not pay it, that is a machine-wide setting rather than a
+diktat one. `sudo nvidia-smi -pm 1` plus `sudo nvidia-smi --lock-gpu-clocks=…`
+(reset with `-rgc`), or on AMD `power_dpm_force_performance_level`, hold the
+clocks up for everything on the machine and spend idle power to do it. On a
+laptop that is a poor trade, which is why it is not the default.
+
+The daemon's log reports both halves, so a machine that behaves differently
+says so:
+
+    Model now parakeet-tdt-0.6b-v2 … in 1.01s (woke 1.626s, read 151ms, open 857ms)
+
+`woke` is what waking the card cost and `open` is the load itself. A long
+`woke` means the card was asleep; a long `open` after a short `woke` is
+something else.
+
 To compare models on fixed audio instead of live, `go run ./cmd/transcribe
 -model <name> file.wav` runs any of them over the same WAVs. It is a
 development tool rather than part of the daemon, so it is not installed; run

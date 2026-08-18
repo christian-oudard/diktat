@@ -272,6 +272,14 @@ type loadResult struct {
 	err   error
 	took  time.Duration
 	gen   int
+	// woke is what the rehearsal before the load cost, which is the only read
+	// on the card's power state available from here. Vulkan reports no clocks
+	// and ggml reports none either, so the measurement is a fixed graph on
+	// fixed audio: the same second of speech costs around 150ms on a card at
+	// its clocks and near a second on one that has been left alone. It is
+	// beside the load in the log because together they say whether a slow load
+	// was a cold card, and on unfamiliar hardware that is the whole question.
+	woke time.Duration
 }
 
 func (d *daemon) publishModel() {
@@ -378,9 +386,35 @@ func (d *daemon) startLoad(dir string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	d.loading, d.cancel = dir, cancel
 	gen := d.suspends
+	// Bring the card's clocks up before the weights go over, not during. A
+	// load is thousands of small transfers and not one of them is long enough
+	// to clock the card up by itself, so on a card left idle the whole upload
+	// runs at the bottom of its power curve. Measured on a laptop RTX 4070,
+	// parakeet-tdt-0.6b took 183ms loaded straight after a rehearsal and
+	// 1m50.8s after thirty seconds of quiet, with everything else equal; one
+	// run in between brought it back to 590ms. Nothing is wrong with the
+	// card or the link, it is asleep, and this is the same rehearsal the daemon
+	// already runs before a dictation for the same reason.
+	//
+	// This is a graph run, not a delay: the goroutine below waits for it to
+	// finish rather than for any interval. What it costs is what that card
+	// needed, ~130ms when it was already at its clocks and ~880ms when not.
+	//
+	// Nothing to wake it with is fine: a bucket already in flight means the
+	// card is busy, and no model at all means this is the first load of the
+	// session, which follows the backend's own device init.
+	wakeStart := time.Now()
+	woke := d.wakeRun(nil)
 	d.restoreStatus()
 	log.Printf("Loading %s in the background", dir)
 	go func() {
+		// The clocks have to be up before the upload starts, not alongside it,
+		// so this waits rather than racing.
+		var wokeFor time.Duration
+		if woke != nil {
+			<-woke
+			wokeFor = time.Since(wakeStart)
+		}
 		t0 := time.Now()
 		model, err := asr.Load(dir)
 		// Cancelled while it was reading: nobody is waiting for this
@@ -390,7 +424,7 @@ func (d *daemon) startLoad(dir string) {
 			model.Close()
 			model, err = nil, ctx.Err()
 		}
-		d.loaded <- loadResult{dir: dir, model: model, err: err, took: time.Since(t0), gen: gen}
+		d.loaded <- loadResult{dir: dir, model: model, err: err, took: time.Since(t0), gen: gen, woke: wokeFor}
 	}()
 }
 
@@ -477,8 +511,9 @@ func (d *daemon) finishLoad(res loadResult) {
 		}
 	default:
 		d.install(res.dir, res.model)
-		log.Printf("Model now %s in %s (%s), %s resident",
-			res.model.Arch(), res.took.Round(time.Millisecond), res.model.LoadTimings(),
+		log.Printf("Model now %s in %s (woke %s, %s), %s resident",
+			res.model.Arch(), res.took.Round(time.Millisecond),
+			res.woke.Round(time.Millisecond), res.model.LoadTimings(),
 			human.Bytes(res.model.Bytes()))
 	}
 	// A request made during the load, unless it asked for what the load just
@@ -714,21 +749,37 @@ func (d *daemon) startRecording() {
 // session on audio whose words are known in advance, which makes checking the
 // answer a free test that the model still works; see checkProbe.
 func (d *daemon) wake() {
-	d.probing = false
-	if !d.model.OnGPU() || d.busy != nil {
-		return
+	d.probing = d.wakeRun(&d.probe) != nil
+}
+
+// wakeRun starts one second of the known speech on the model in use and
+// returns the channel that closes when it ends, or nil when there is nothing
+// to run it on or something is already running. text, when given, receives
+// what came back once that channel closes.
+//
+// Two callers want this for the same reason and keep different halves of it.
+// A recording wants the clocks up and also wants the transcript, since this is
+// the only audio all session whose words are known in advance; a model load
+// wants only the clocks.
+func (d *daemon) wakeRun(text *string) <-chan struct{} {
+	if d.model == nil || !d.model.OnGPU() || d.busy != nil {
+		return nil
 	}
 	speech, err := warmup.Speech()
 	if err != nil {
-		return
+		return nil
 	}
 	done := make(chan struct{})
-	d.busy, d.probing = done, true
+	d.busy = done
 	model := d.model
 	go func() {
 		defer close(done)
-		d.probe, _ = model.Transcribe(context.Background(), warmup.Fit(speech, 1))
+		out, _ := model.Transcribe(context.Background(), warmup.Fit(speech, 1))
+		if text != nil {
+			*text = out
+		}
 	}()
+	return done
 }
 
 // checkProbe reloads the model if the wake run says it has stopped working.
