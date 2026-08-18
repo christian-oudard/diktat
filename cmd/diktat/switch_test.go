@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"log"
 	"path/filepath"
 	"testing"
 	"time"
@@ -250,5 +251,20 @@ func TestCheckProbeRemembersAnswers(t *testing.T) {
 	d.checkProbe()
 	if !d.answered {
 		t.Error("a daemon with no probe in flight was judged anyway")
+	}
+}
+
+// The daemon's log goes to stderr and nothing else, which under systemd is the
+// journal. The journal stamps what it captures, so stamping it here as well
+// would put two times on every line; run from a terminal nobody stamps it at
+// all, which is poor for a log whose subject is how long things took.
+func TestLogFlags(t *testing.T) {
+	t.Setenv("JOURNAL_STREAM", "8:1234")
+	if got := logFlags(); got != 0 {
+		t.Errorf("logFlags() = %d under systemd, want 0: the journal stamps its own", got)
+	}
+	t.Setenv("JOURNAL_STREAM", "")
+	if got := logFlags(); got != log.LstdFlags {
+		t.Errorf("logFlags() = %d in a terminal, want %d", got, log.LstdFlags)
 	}
 }

@@ -77,7 +77,7 @@ func runDaemon(args []string) {
 	// be followed while the daemon is running. A file of our own was one more
 	// thing to find, and it was truncated at every start, so the log of the
 	// crash was gone by the time anyone looked.
-	log.SetFlags(0)
+	log.SetFlags(logFlags())
 	log.Printf("Starting %s %s", gitRev, exePath())
 
 	// Resolved once, here, because a daemon that cannot name these files
@@ -955,6 +955,23 @@ func (d *daemon) appendHistory(text string) {
 		"ts":   time.Now().UTC().Format(time.RFC3339Nano),
 		"text": text,
 	})
+}
+
+// logFlags stamps the log with the time, unless something downstream is
+// already doing it.
+//
+// systemd connects a service's stderr straight to the journal, which is why
+// nothing here configures a log destination, and it stamps every line as it
+// arrives; adding our own would print two times per line. Run by hand there is
+// nothing to stamp them at all, and a log whose subject is how long things
+// took is a poor one to read without times. systemd sets JOURNAL_STREAM on
+// exactly the processes whose output it is capturing, so it answers which of
+// the two this is, and it answers for `systemd-run` and `systemd-cat` too.
+func logFlags() int {
+	if os.Getenv("JOURNAL_STREAM") != "" {
+		return 0
+	}
+	return log.LstdFlags
 }
 
 // These are resolved at startup and used from every corner of the daemon,

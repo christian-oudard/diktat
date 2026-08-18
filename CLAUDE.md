@@ -398,7 +398,13 @@ everything else running.
 
 The log is not among these at all. It goes to stderr, which is the journal
 when systemd runs the daemon and the terminal when a person does, and it
-records lengths and timings, never the text.
+records lengths and timings, never the text. Nothing configures that routing:
+systemd connects a service's stderr to the journal itself. It also stamps
+every line it captures, so the daemon stamps its own only when nothing else
+will, which `JOURNAL_STREAM` answers, since systemd sets it on exactly the
+processes whose output it is taking. Otherwise `go run ./cmd/diktat daemon`
+prints a log about how long things took with no times in it, and the same
+daemon under systemd prints two.
 
 ## Build
 
