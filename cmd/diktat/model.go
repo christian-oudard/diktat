@@ -168,7 +168,7 @@ func switchModel(nameOrNumber string) {
 	// and it is fixable without starting anything.
 	if err := models.Check(path); err != nil {
 		if !inMenu {
-			log.Fatalf("unknown model %q; the menu is: diktat model", nameOrNumber)
+			log.Fatalf("unknown model %q", nameOrNumber)
 		}
 		if !confirm(fmt.Sprintf("%s is not downloaded. Fetch it now (%s)?", spec.Name, spec.Size())) {
 			log.Fatal("cancelled")
