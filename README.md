@@ -1,17 +1,42 @@
-# Voice Typing
+# Diktat
 
-Voice dictation for Linux/Wayland, on transcribe.cpp with a GPU when there is
-one.
+State-of-the-art voice typing for your Linux computer.
+
+You are the dictator of your own computer. Press a key, tell your agents what needs to
+happen next, and it happens.
+
 
 ## Install
 
-    $ nix profile add .
+On your user profile:
+`$ nix profile add .`
 
-Not alongside the home-manager module below. `~/.nix-profile/bin` comes first
-on PATH, so a profile install shadows the managed one and never moves again:
-`diktat version` goes on reporting the build from the day it was installed
-while every rebuild updates a binary nothing runs. `nix profile remove diktat`
-undoes it. Pick one or the other.
+In your Nix config:
+
+    inputs.diktat.url = "github:christian-oudard/diktat";
+
+    # and in home-manager
+    imports = [ inputs.diktat.homeManagerModules.default ];
+
+That brings the binary and the user service in together, so the daemon starts
+with your session. Use this or the profile install, not both: `~/.nix-profile`
+comes first on PATH, so a profile install shadows the managed one and goes on
+reporting the build it was installed from while every rebuild updates a binary
+nothing runs.
+
+From a checkout, with Go:
+
+    $ nix develop --command go build -o diktat ./cmd/diktat
+
+`go install github.com/christian-oudard/diktat/cmd/diktat@latest` does not
+work, and cannot until the Go bindings are published. The binary links
+libtranscribe through cgo, so that C library has to exist and be named in
+`CGO_CFLAGS` and `CGO_LDFLAGS` before anything compiles, which is what the
+devShell above sets up; and `go.mod` reaches the bindings through a relative
+`replace` that a module proxy cannot follow.
+
+You may want to check what version you just installed with `diktat version`.
+
 
 ## Usage
 
@@ -355,3 +380,10 @@ running daemon is some other build. The daemon logs the same on startup.
 ## Stop the daemon
 
     $ systemctl --user stop diktat
+
+## License
+
+MIT; see [LICENSE](LICENSE). Speech recognition is
+[transcribe.cpp](https://github.com/handy-computer/transcribe.cpp), also MIT.
+The models are downloaded at runtime and carry their own licenses, which are
+not this one.
