@@ -23,6 +23,7 @@ import (
 	"github.com/christian-oudard/diktat/internal/ipc"
 	"github.com/christian-oudard/diktat/internal/models"
 	"github.com/christian-oudard/diktat/internal/output"
+	"github.com/christian-oudard/diktat/internal/sco"
 	"github.com/christian-oudard/diktat/internal/suspend"
 	"github.com/christian-oudard/diktat/internal/warmup"
 )
@@ -132,6 +133,7 @@ func runDaemon(args []string) {
 		loaded:    make(chan loadResult, 1),
 		rehearsed: make(chan bucketResult, 1),
 		asleep:    suspend.Total(),
+		linkWatch: true,
 	}
 	defer d.closeModel()
 	defer os.Remove(activityPath)
@@ -151,6 +153,7 @@ func runDaemon(args []string) {
 		select {
 		case <-tick.C:
 			d.checkSuspend()
+			d.checkLink()
 		case sig := <-sigCh:
 			switch sig {
 			case syscall.SIGUSR1:
@@ -231,6 +234,16 @@ type daemon struct {
 	// installed; see finishLoad.
 	asleep   time.Duration
 	suspends int
+
+	// The bluetooth audio link the microphone arrives on. linkSeen says one
+	// has existed this session, which is what distinguishes a headset whose
+	// link has died from a machine that never had bluetooth; linkGone says
+	// this disappearance has already been answered, so a headset switched off
+	// on purpose is not rebuilt at every tick. linkWatch goes false if the
+	// adapters cannot be read at all.
+	linkWatch bool
+	linkSeen  bool
+	linkGone  bool
 
 	mu        sync.Mutex
 	recording bool
@@ -427,6 +440,52 @@ func (d *daemon) startLoad(dir string) {
 		}
 		d.loaded <- loadResult{dir: dir, model: model, err: err, took: time.Since(t0), gen: gen, woke: wokeFor}
 	}()
+}
+
+// checkLink notices that the bluetooth link the microphone arrives on has
+// gone, and rebuilds the audio device before anyone presses the key. Without
+// it the loss is found by dictating into a dead microphone, which costs that
+// dictation; the link is checked between them, so it costs nothing.
+//
+// The transition is what is watched, not the count. Zero synchronous links is
+// also the answer on every machine with no bluetooth and on every headset that
+// is merely connected, so only losing one that existed means anything. It is
+// answered once: a headset switched off on purpose stays off, and rebuilding
+// at every tick would fight whoever switched it.
+//
+// A rebuild for the wrong reason is cheap here, which is why this can afford
+// to be eager. It happens between dictations and costs a couple of seconds of
+// a microphone nobody is using, and reopening also picks up whatever the
+// default input became, which after a headset is switched off is the answer
+// anyway.
+func (d *daemon) checkLink() {
+	// Not during a dictation: Rebuild closes the device the capture is
+	// arriving on. What broke mid-recording is caught when it ends.
+	if !d.linkWatch || d.isRecording() {
+		return
+	}
+	n, err := sco.Links()
+	if err != nil {
+		// Said once. There is no bluetooth microphone to lose on a machine
+		// whose adapters cannot be read, and a line every two seconds would
+		// bury the log.
+		log.Printf("Cannot read the bluetooth link state, no longer watching it: %v", err)
+		d.linkWatch = false
+		return
+	}
+	if n > 0 {
+		d.linkSeen = true
+		d.linkGone = false
+		return
+	}
+	if !d.linkSeen || d.linkGone {
+		return
+	}
+	d.linkGone = true
+	log.Printf("The microphone's bluetooth link is gone: rebuilding the audio device.")
+	if err := d.recorder.Rebuild(); err != nil {
+		log.Printf("Rebuilding the audio device failed: %v", err)
+	}
 }
 
 // checkSuspend notices that the machine has slept since the last look and

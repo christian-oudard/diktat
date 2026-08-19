@@ -253,9 +253,20 @@ not an error: the source stays RUNNING and unmuted and delivers bit-exact zero
 for the rest of the session, so every dictation types nothing.
 
 `Recorder.Rebuild` closes and reopens the device, which renegotiates the
-profile on its own, so nothing here knows what bluetooth is. `audio.IsDead`
-says when, once per capture, since a headset gates its own silence to zero and
-cannot be watched for it. Both carry the measurements.
+profile on its own, so nothing here knows what bluetooth is. When to do it is
+the hard half, and `internal/sco` is the answer: it asks the kernel for the
+adapters' connection list, where a live headset microphone is one synchronous
+link and a dead one is none. The daemon watches for that link disappearing on
+its existing ticker and rebuilds between dictations, so the loss costs nothing.
+`audio.IsDead` reads a whole capture for the same failure and is the backstop
+for a microphone that dies some other way.
+
+Three earlier signals are ruled out by measurement, and the comments in those
+files carry the numbers: the audio itself, because a headset gates its own
+silence to bit-exact zero for seconds at a time; the source's `bluez5.profile`
+property, which reads `off` on a healthy link and a dead one; and the kernel's
+`SCO packet for unknown connection handle` line, which ordinary teardown emits
+too, `Rebuild` included.
 
 ## One model resident
 

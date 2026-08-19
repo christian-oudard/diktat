@@ -144,8 +144,9 @@ func (r *Recorder) capture(_, in []byte, frameCount uint32) {
 // It cannot report whether the rebuild worked. Confirming that would mean
 // listening to the new device and expecting signal, and a headset that gates
 // its own silence to bit-exact zero gives none until someone speaks; see
-// IsDead. So a rebuild that did not help is found the same way the first
-// failure was, by the next dictation, which rebuilds again.
+// IsDead. What can be checked is the link itself, which internal/sco reads
+// directly, and which the daemon looks at on a ticker: a rebuild that did not
+// restore it leaves the link still missing.
 //
 // The caller must not be recording: the device the capture is arriving on is
 // the one being closed.
