@@ -1,3 +1,9 @@
+# direnv's cache. Machine-specific in both halves: nix-direnv-reload has the
+# checkout's absolute path baked into it, and the flake-profile entries are
+# symlinks into the store that exist as GC roots on the machine that built
+# them. Swept in by a commit about a license file.
+.direnv/
+
 # nix build output, in any directory: it is a symlink into the store, and one
 # was committed into the vendored bindings after a build ran from that cwd.
 result
