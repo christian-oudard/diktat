@@ -2,72 +2,56 @@
 
 State-of-the-art voice typing for your Linux computer.
 
-You are the dictator of your own computer. Press a key, tell your agents what needs to
-happen next, and it happens.
+You are the dictator of your own computer. Press a key, tell your agents what needs to happen next, and it happens.
 
 
 ## Install
 
-On your user profile:
-`$ nix profile add .`
-
 In your Nix config:
-
+```
     inputs.diktat.url = "github:christian-oudard/diktat";
-
     # and in home-manager
     imports = [ inputs.diktat.homeManagerModules.default ];
+```
 
-That brings the binary and the user service in together, so the daemon starts
-with your session. Use this or the profile install, not both: `~/.nix-profile`
-comes first on PATH, so a profile install shadows the managed one and goes on
-reporting the build it was installed from while every rebuild updates a binary
-nothing runs.
+Or on your Nix user profile, :
+`$ nix profile add .`
 
-From a checkout, with Go:
+With Go, from a checkout:
+`$ go build -o diktat ./cmd/diktat`
 
-    $ nix develop --command go build -o diktat ./cmd/diktat
+libtranscribe has to be installed first, since the binary links it. The binding
+asks the linker for `-ltranscribe` and nothing else, so a standard prefix needs
+no configuration; for anything else set `CGO_CFLAGS=-I$PREFIX/include` and
+`CGO_LDFLAGS=-L$PREFIX/lib`. Installing straight from the module path does not
+work, because `go.mod` reaches the Go bindings through a relative `replace` that
+no module proxy can follow; a checkout is fine, since `vendor/` is committed.
 
-`go install github.com/christian-oudard/diktat/cmd/diktat@latest` does not
-work, and cannot until the Go bindings are published. The binary links
-libtranscribe through cgo, so that C library has to exist and be named in
-`CGO_CFLAGS` and `CGO_LDFLAGS` before anything compiles, which is what the
-devShell above sets up; and `go.mod` reaches the bindings through a relative
-`replace` that a module proxy cannot follow.
 
-You may want to check what version you just installed with `diktat version`.
+## Download a speech model
+
+First, download a small speech model. The best small model is currently `parakeet-tdt_ctc-110m`.
+`$ diktat model parakeet-tdt_ctc-110m`
+
 
 ## Running the Diktat daemon
 
+The daemon process is responsible for loading models into memory, recording your voice (when you ask it to), and sending text to your current window.
 
-## Usage
-
-First you need to select download a speech model:
-`$ diktat model`
+If you installed with Nix 
 
 
-
-Fetch a model, run `diktat daemon` for the whole session, and bind
-`diktat toggle` to a key in your Sway config:
-
-    $ diktat model parakeet-tdt_ctc-110m   # offers to download it
+## Key bindings
 
     bindsym XF86Favorites exec diktat toggle
 
 - First press: starts recording
 - Second press: stops recording, transcribes, types result
 
+*To-Do*: key bindings for other window managers.
+
+
 ## Running the daemon
-
-The daemon holds the model for the whole session, so it wants a service
-manager rather than a line in a window manager config: something has to
-restart it when it dies, cap what it holds, and keep a second copy from
-starting. There is no single-instance guard, and the second daemon overwrites
-the first one's PID file, so `toggle` reaches only the newer one while the
-older keeps its model resident for the rest of the session.
-
-Pick whichever of these matches the session. All of them end with the same
-thing running; they differ only in what starts it.
 
 ### With nix, via home-manager
 
@@ -234,7 +218,6 @@ live dictation without restarting the session:
 
     $ diktat model                    # the menu, then pick one; Enter keeps
     $ diktat model 3                  # or go straight to the third entry
-    $ diktat model parakeet-tdt_ctc-110m   # or name it
 
 Switching to a model that is not in the cache offers to fetch it first, so
 there is nothing to type twice. The menu numbers are the short way in; the
