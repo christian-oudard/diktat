@@ -54,6 +54,32 @@ func IsSilent(samples []int16) bool {
 	return percentileAbs(samples, normPercentile) < normFloor
 }
 
+// IsDead reports whether a capture holds no set bit anywhere. A bluetooth
+// headset whose SCO link has died reads exactly this, on every capture, until
+// something rebuilds the audio device; the daemon does that rather than go on
+// typing nothing for the rest of the session.
+//
+// It is not proof the device is gone, and the tempting stronger claim is
+// false. A live input does not always carry a noise floor: measured over 22
+// seconds of a healthy link, a Jabra headset gated its own silence to
+// bit-exact zero for runs of up to 6.2 seconds, and only 9.7% of its samples
+// were nonzero at all. So this cannot be watched between dictations to catch
+// a dead link early, and it cannot confirm a rebuild worked. What it can do
+// is read a whole capture, where the alternative reading is that the user
+// pressed the key and said nothing, and a rebuild costs them a few seconds of
+// a microphone they were not using.
+//
+// IsSilent is the other question and cannot serve for this one: it is a
+// threshold, so a quiet room passes it too.
+func IsDead(samples []int16) bool {
+	for _, s := range samples {
+		if s != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // Gain is what a capture should be scaled by so that a high percentile of its
 // amplitude reaches normTargetPeak, boosting quiet mic input the model would
 // otherwise transcribe as empty. Using a percentile rather than the true peak

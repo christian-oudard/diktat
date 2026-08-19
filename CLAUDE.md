@@ -348,6 +348,21 @@ cost canary-180m-flash 19 points of word error rate and saved parakeet 4, so a
 benchmark run without warming is not measuring the daemon's pipeline. That is
 why `internal/warmup` is shared rather than living in the daemon.
 
+## The microphone going away
+
+The capture device is opened once and never closed; `Recorder.Start` and
+`Stop` only gate whether the callback keeps anything. That holds a bluetooth
+headset in its headset profile for the whole session, which is the right trade
+for a tool that is always about to want the microphone, and it is also what
+leaves the headset's SCO link up until something breaks it. A broken link is
+not an error: the source stays RUNNING and unmuted and delivers bit-exact zero
+for the rest of the session, so every dictation types nothing.
+
+`Recorder.Rebuild` closes and reopens the device, which renegotiates the
+profile on its own, so nothing here knows what bluetooth is. `audio.IsDead`
+says when, once per capture, since a headset gates its own silence to zero and
+cannot be watched for it. Both carry the measurements.
+
 ## One model resident
 
 The model in use is the only one held, and the one it replaces is closed as

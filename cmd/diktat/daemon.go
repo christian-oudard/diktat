@@ -917,6 +917,20 @@ func (d *daemon) stopRecording() {
 		float64(len(samples))/float64(audio.SampleRate), time.Since(d.startedAt).Seconds(),
 		peak, rms, gain)
 
+	// Not one bit set in the whole capture. Either the input is gone, which
+	// on a bluetooth headset outlives the dictation and every one after it,
+	// or nobody spoke. Rebuilding the device answers the first and costs the
+	// second a few seconds of a microphone that was not in use, which is the
+	// cheap way round: the expensive way was a session of dictations that
+	// typed nothing and a log that said only "0 chars".
+	if audio.IsDead(samples) {
+		log.Printf("Nothing came through the microphone: rebuilding the audio device.")
+		if err := d.recorder.Rebuild(); err != nil {
+			log.Printf("Rebuilding the audio device failed: %v", err)
+		}
+		return
+	}
+
 	// Nothing was said. Every family invents something when asked to
 	// transcribe silence, and the inventions cost more than the check does.
 	if silent {

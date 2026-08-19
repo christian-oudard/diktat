@@ -29,6 +29,13 @@ const RunawayGuard = time.Hour
 // to prove a bounds check.
 var maxSamples = SampleRate * int(RunawayGuard/time.Second)
 
+// teardownWait is how long the audio stack needs to let go of a device after
+// the last stream on it closes. Measured on PipeWire with a bluetooth headset:
+// the card's profile drops between one and two seconds after diktat's stream
+// goes away. Reopening inside that window would be handed the same dead
+// transport back, which is the whole thing Rebuild exists to get rid of.
+const teardownWait = 2 * time.Second
+
 // Recorder owns a miniaudio context and capture device. Start begins
 // accumulating samples; Stop returns and clears them.
 type Recorder struct {
@@ -42,8 +49,15 @@ type Recorder struct {
 }
 
 // NewRecorder initializes the miniaudio context and a 16kHz mono 16-bit
-// capture device. Recording is gated by Start; the device exists but does
-// not produce samples until then.
+// capture device. Recording is gated by Start, which only arms the callback:
+// the device runs and delivers audio for the whole session, and what Start
+// changes is whether any of it is kept.
+//
+// So the audio stack sees a capture stream held open from daemon start to
+// daemon exit, which pins a bluetooth headset into its headset profile the
+// entire time. That is the right trade here, since renegotiating the profile
+// costs a second or two and a dictation tool is always about to want the
+// microphone, but see Rebuild for what it costs.
 func NewRecorder() (*Recorder, error) {
 	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 	if err != nil {
@@ -51,52 +65,94 @@ func NewRecorder() (*Recorder, error) {
 	}
 
 	r := &Recorder{ctx: ctx}
+	if err := r.open(); err != nil {
+		_ = ctx.Uninit()
+		ctx.Free()
+		return nil, err
+	}
+	return r, nil
+}
 
+// open initializes and starts a capture device on the current default input.
+// Separate from NewRecorder because Rebuild does the same thing again, on the
+// same context: the context is the audio backend, which is not what breaks.
+func (r *Recorder) open() error {
 	cfg := malgo.DefaultDeviceConfig(malgo.Capture)
 	cfg.Capture.Format = malgo.FormatS16
 	cfg.Capture.Channels = 1
 	cfg.SampleRate = SampleRate
 	cfg.Alsa.NoMMap = 1
 
-	callbacks := malgo.DeviceCallbacks{
-		Data: func(_, in []byte, frameCount uint32) {
-			r.mu.Lock()
-			defer r.mu.Unlock()
-			if !r.active {
-				return
-			}
-			samples := make([]int16, frameCount)
-			var peak int16
-			for i := range samples {
-				s := int16(binary.LittleEndian.Uint16(in[2*i:]))
-				samples[i] = s
-				a := s
-				if a < 0 {
-					a = -a
-				}
-				if a > peak {
-					peak = a
-				}
-			}
-			r.appendSamples(samples)
-			r.level = float64(peak) / full
-		},
-	}
-
-	dev, err := malgo.InitDevice(ctx.Context, cfg, callbacks)
+	dev, err := malgo.InitDevice(r.ctx.Context, cfg, malgo.DeviceCallbacks{Data: r.capture})
 	if err != nil {
-		_ = ctx.Uninit()
-		ctx.Free()
-		return nil, fmt.Errorf("init capture device: %w", err)
+		return fmt.Errorf("init capture device: %w", err)
 	}
 	if err := dev.Start(); err != nil {
 		dev.Uninit()
-		_ = ctx.Uninit()
-		ctx.Free()
-		return nil, fmt.Errorf("start capture device: %w", err)
+		return fmt.Errorf("start capture device: %w", err)
 	}
+	r.mu.Lock()
 	r.device = dev
-	return r, nil
+	r.mu.Unlock()
+	return nil
+}
+
+// capture is the device callback, accumulating into buf while armed.
+func (r *Recorder) capture(_, in []byte, frameCount uint32) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.active {
+		return
+	}
+	samples := make([]int16, frameCount)
+	var peak int16
+	for i := range samples {
+		s := int16(binary.LittleEndian.Uint16(in[2*i:]))
+		samples[i] = s
+		a := s
+		if a < 0 {
+			a = -a
+		}
+		if a > peak {
+			peak = a
+		}
+	}
+	r.appendSamples(samples)
+	r.level = float64(peak) / full
+}
+
+// Rebuild closes the capture device and opens a new one, which is how an
+// input that has gone bit-exact silent comes back.
+//
+// What goes silent is a bluetooth headset's SCO link, and holding the device
+// open is what exposes it: WirePlumber re-evaluates the card's profile
+// whenever playback starts or stops, diktat's stream pins that profile, and
+// the link can end up down on the host while the headset still holds it. The
+// kernel says "SCO packet for unknown connection handle" once and nothing
+// mentions it again. The source stays RUNNING and unmuted and delivers zeros
+// for the rest of the session. Do not look for a cleaner signal in the
+// stack's own state: bluez5.profile on the source node reads "off" while the
+// link is dead, and reads "off" on a healthy one too.
+//
+// Closing the last stream on a device is what makes the audio stack tear the
+// device down, and that teardown is the repair: on a bluetooth headset it
+// drops the card's profile, so opening again negotiates a fresh HFP link in
+// place of the dead one. Measured to be the same fix as bouncing the profile
+// by hand with pactl, without diktat having to know that bluetooth, profiles
+// or pactl exist.
+//
+// It cannot report whether the rebuild worked. Confirming that would mean
+// listening to the new device and expecting signal, and a headset that gates
+// its own silence to bit-exact zero gives none until someone speaks; see
+// IsDead. So a rebuild that did not help is found the same way the first
+// failure was, by the next dictation, which rebuilds again.
+//
+// The caller must not be recording: the device the capture is arriving on is
+// the one being closed.
+func (r *Recorder) Rebuild() error {
+	r.device.Uninit()
+	time.Sleep(teardownWait)
+	return r.open()
 }
 
 // appendSamples accumulates up to maxSamples, dropping the rest. Callers hold
