@@ -977,6 +977,27 @@ func mute(probe string, answered bool) bool {
 	return probe == "" && answered
 }
 
+// micGone repairs an input that has stopped giving usable audio, and lights
+// the bar because the press produced nothing and the reason was not the
+// speaker. A capture that is merely silent gets neither: somebody pressing the
+// key and saying nothing is an ordinary thing to do, and a light that scolds
+// them for it is noise.
+//
+// Two failures arrive here and Rebuild is the same answer to both, since
+// closing and reopening the device is what renegotiates a bluetooth profile
+// and equally what replaces a stream the audio stack has torn down. Rebuilding
+// for the wrong reason costs a couple of seconds of a microphone nobody is
+// using; not rebuilding costs every dictation until somebody restarts the
+// daemon, which is a thing nobody thinks to do, because the key looks dead
+// rather than the microphone.
+func (d *daemon) micGone(why string) {
+	log.Printf("%s: rebuilding the audio device.", why)
+	if err := d.recorder.Rebuild(); err != nil {
+		log.Printf("Rebuilding the audio device failed: %v", err)
+	}
+	d.failed = true
+}
+
 // settle waits for the background run holding the model to finish. A model is
 // single-threaded, and both the wake run and a warmup bucket hold one, so
 // nothing else may touch a model until whichever it is has let go.
@@ -1009,8 +1030,25 @@ func (d *daemon) stopRecording() {
 	defer d.restoreStatus()
 	defer d.warmNext()
 
+	// Nothing arrived at all. Under the deadline that is a press too short to
+	// have collected a callback, and pressing the key twice quickly is an
+	// ordinary thing to do. Past it the device has stopped: an open capture
+	// device delivers callbacks throughout, so a recording that ran without
+	// one is not a quiet room, it is an input that is no longer there.
+	//
+	// This is not the bluetooth failure and neither check for that one sees
+	// it. internal/sco watches a link this machine may not have, and
+	// audio.IsDead reads a capture that here has no samples to read. What
+	// stops a device is anything that pulls the stream out from under it: a
+	// session manager restarting, the sound server going away, the input being
+	// unplugged. Held open for a whole session, the device meets one of those
+	// eventually, and it does not recover by itself.
 	if len(samples) == 0 {
-		log.Println("No audio.")
+		if time.Since(d.startedAt) < audio.CallbackDeadline {
+			log.Println("No audio.")
+			return
+		}
+		d.micGone("The microphone delivered nothing at all")
 		return
 	}
 	peak, rms := audio.Levels(samples)
@@ -1033,15 +1071,7 @@ func (d *daemon) stopRecording() {
 	// cheap way round: the expensive way was a session of dictations that
 	// typed nothing and a log that said only "0 chars".
 	if audio.IsDead(samples) {
-		log.Printf("Nothing came through the microphone: rebuilding the audio device.")
-		if err := d.recorder.Rebuild(); err != nil {
-			log.Printf("Rebuilding the audio device failed: %v", err)
-		}
-		// The press produced nothing and the reason was not the speaker, so
-		// the bar says so. A capture that is merely silent does not: somebody
-		// pressing the key and saying nothing is an ordinary thing to do, and
-		// a light that scolds them for it is noise.
-		d.failed = true
+		d.micGone("Nothing came through the microphone")
 		return
 	}
 

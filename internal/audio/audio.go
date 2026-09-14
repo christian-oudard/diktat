@@ -29,6 +29,14 @@ const RunawayGuard = time.Hour
 // to prove a bounds check.
 var maxSamples = SampleRate * int(RunawayGuard/time.Second)
 
+// CallbackDeadline is how long a recording may run with not one callback
+// before the device behind it is judged to have stopped. An open capture
+// device delivers callbacks the whole time it is open, whether or not anybody
+// is speaking, at a period of about ten milliseconds; this is fifty of those.
+// Under it, an empty capture is a press too short to have collected one, which
+// is what pressing the key twice quickly looks like.
+const CallbackDeadline = 500 * time.Millisecond
+
 // teardownWait is how long the audio stack needs to let go of a device after
 // the last stream on it closes. Measured on PipeWire with a bluetooth headset:
 // the card's profile drops between one and two seconds after diktat's stream

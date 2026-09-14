@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/christian-oudard/diktat/internal/config"
 )
@@ -60,13 +61,56 @@ func TestDictatingWithNoModel(t *testing.T) {
 	}
 }
 
-// Nothing captured is not an error and must not reach the model: pressing the
-// key twice quickly is an ordinary thing to do.
+// Nothing captured in a press that barely happened is not an error and must
+// not reach the model: pressing the key twice quickly is an ordinary thing to
+// do, and the device is not at fault for having had no time to deliver a
+// callback.
 func TestDictatingWithNoAudio(t *testing.T) {
-	d := &daemon{recorder: &fakeRecorder{}, cfg: emptyConfig()}
+	fake := &fakeRecorder{}
+	d := &daemon{recorder: fake, cfg: emptyConfig(), startedAt: time.Now()}
 	logged := captureLog(t, func() { d.stopRecording() })
 	if !strings.Contains(logged, "No audio") {
 		t.Errorf("log was %q; want it to say there was no audio", logged)
+	}
+	if fake.rebuilds != 0 {
+		t.Errorf("rebuilt the audio device %d times for a press that barely happened", fake.rebuilds)
+	}
+	if d.failed {
+		t.Error("a press too short to capture anything lit the bar")
+	}
+}
+
+// A recording that ran and delivered not one callback is a capture device that
+// has stopped, which no amount of waiting repairs. It is not the bluetooth
+// failure -- there is no audio at all here, rather than audio that is all
+// zeros -- so neither internal/sco nor audio.IsDead sees it, and it outlives
+// the session exactly the same way.
+//
+// This went unfixed for four days: a session manager restart tore down the
+// stream underneath a device held open since boot, and every press after it
+// logged one quiet line and left the bar idle, so the key looked dead.
+func TestStoppedCaptureDeviceIsRebuilt(t *testing.T) {
+	dir := t.TempDir()
+	statusPath = filepath.Join(dir, "status")
+	activityPath = filepath.Join(dir, "activity")
+
+	fake := &fakeRecorder{}
+	d := &daemon{recorder: fake, cfg: emptyConfig(), startedAt: time.Now().Add(-5 * time.Second)}
+
+	logged := captureLog(t, func() { d.stopRecording() })
+
+	if fake.rebuilds != 1 {
+		t.Errorf("rebuilt %d times, want once", fake.rebuilds)
+	}
+	if !strings.Contains(logged, "microphone") {
+		t.Errorf("log was %q; want it to say the microphone is why", logged)
+	}
+	raw, err := os.ReadFile(statusPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "ERR") {
+		t.Errorf("the bar says %q after a recording that delivered nothing", raw)
 	}
 }
 
