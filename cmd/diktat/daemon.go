@@ -275,14 +275,13 @@ type daemon struct {
 	suspends int
 
 	// The bluetooth audio link the microphone arrives on. linkSeen says one
-	// has existed this session, which is what distinguishes a headset whose
-	// link has died from a machine that never had bluetooth; linkGone says
-	// this disappearance has already been answered, so a headset switched off
-	// on purpose is not rebuilt at every tick. linkWatch goes false if the
-	// adapters cannot be read at all.
+	// exists as of the last look, which is what distinguishes a headset whose
+	// link has died from a machine that never had bluetooth, and what keeps a
+	// headset switched off on purpose from being rebuilt at every tick: a
+	// rebuild clears it, so nothing is answered twice until a link is seen
+	// again. linkWatch goes false if the adapters cannot be read at all.
 	linkWatch bool
 	linkSeen  bool
-	linkGone  bool
 
 	mu        sync.Mutex
 	recording bool
@@ -481,6 +480,10 @@ func (d *daemon) startLoad(dir string) {
 	}()
 }
 
+// scoLinks is how the link watch counts them, indirected so a test can drive
+// the watch without a bluetooth adapter.
+var scoLinks = sco.Links
+
 // checkLink notices that the bluetooth link the microphone arrives on has
 // gone, and rebuilds the audio device before anyone presses the key. Without
 // it the loss is found by dictating into a dead microphone, which costs that
@@ -503,7 +506,7 @@ func (d *daemon) checkLink() {
 	if !d.linkWatch || d.isRecording() {
 		return
 	}
-	n, err := sco.Links()
+	n, err := scoLinks()
 	if err != nil {
 		// Said once. There is no bluetooth microphone to lose on a machine
 		// whose adapters cannot be read, and a line every two seconds would
@@ -514,14 +517,33 @@ func (d *daemon) checkLink() {
 	}
 	if n > 0 {
 		d.linkSeen = true
-		d.linkGone = false
 		return
 	}
-	if !d.linkSeen || d.linkGone {
+	if !d.linkSeen {
 		return
 	}
-	d.linkGone = true
 	log.Printf("The microphone's bluetooth link is gone: rebuilding the audio device.")
+	d.rebuildAudio()
+}
+
+// rebuildAudio replaces the capture device and disarms the link watch until a
+// link is seen again.
+//
+// Disarming is the whole point of routing both repairs through here. A fresh
+// device has no bluetooth link until the audio stack negotiates one, and that
+// takes longer than the two seconds between ticks, so the watch looking at a
+// device it just rebuilt finds zero links and concludes the link is gone. The
+// second rebuild then interrupts the negotiation the first one started, and
+// the microphone stays dead through the dictations that would have worked.
+//
+// That was reachable only because the two repairs did not know about each
+// other: audio.IsDead rebuilds when a dictation comes back bit-exact zero, and
+// the watch, which had answered nothing yet, answered that device's missing
+// link on the next tick. Waiting out a fixed interval instead would be
+// guessing at a duration that belongs to the headset and the audio stack;
+// waiting for the link itself asks them.
+func (d *daemon) rebuildAudio() {
+	d.linkSeen = false
 	if err := d.recorder.Rebuild(); err != nil {
 		log.Printf("Rebuilding the audio device failed: %v", err)
 	}
@@ -992,9 +1014,7 @@ func mute(probe string, answered bool) bool {
 // rather than the microphone.
 func (d *daemon) micGone(why string) {
 	log.Printf("%s: rebuilding the audio device.", why)
-	if err := d.recorder.Rebuild(); err != nil {
-		log.Printf("Rebuilding the audio device failed: %v", err)
-	}
+	d.rebuildAudio()
 	d.failed = true
 }
 

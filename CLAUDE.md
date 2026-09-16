@@ -293,6 +293,14 @@ its existing ticker and rebuilds between dictations, so the loss costs nothing.
 `audio.IsDead` reads a whole capture for the same failure and is the backstop
 for a microphone that dies some other way.
 
+Both repairs go through one function, because a rebuilt device has no link
+until the audio stack negotiates one and that takes longer than the two seconds
+between ticks. A watch looking at a device the other repair just replaced finds
+no link, calls it lost, and rebuilds on top of the negotiation already running
+-- which leaves the microphone dead through the dictations that would have
+worked. So a rebuild clears the flag that says a link was seen, and the watch
+says nothing until one is.
+
 Three earlier signals are ruled out by measurement, and the comments in those
 files carry the numbers: the audio itself, because a headset gates its own
 silence to bit-exact zero for seconds at a time; the source's `bluez5.profile`
