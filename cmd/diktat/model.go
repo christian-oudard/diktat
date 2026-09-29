@@ -73,8 +73,12 @@ func listModels() string {
 
 	// The number is right-aligned because the menu is past ten entries, and a
 	// ragged one shifts every column after it on the rows that need it most.
-	fmt.Printf("  %2s %-28s %8s  %s  %s\n",
-		"#", "Name", "Size", "Downloaded", "Languages")
+	width := 0
+	for _, s := range models.Catalog {
+		width = max(width, len(s.Name))
+	}
+	fmt.Printf("  %2s %-*s %8s  %s  %s\n",
+		"#", width, "Name", "Size", "Downloaded", "Languages")
 	inUse, busy := "", subject
 	for i, s := range models.Catalog {
 		mark := " "
@@ -89,7 +93,7 @@ func listModels() string {
 		if s.Path() == subject {
 			busy = s.Name
 		}
-		fmt.Printf("%s %2d %-28s %8s  %s  %s\n", mark, i+1, s.Name, s.Size(),
+		fmt.Printf("%s %2d %-*s %8s  %s  %s\n", mark, i+1, width, s.Name, s.Size(),
 			tick(s.Downloaded(), "Downloaded"), s.Languages())
 	}
 	switch doing {

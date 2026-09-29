@@ -98,34 +98,42 @@ func language(code string) string {
 // a GPU should move up to parakeet-tdt-0.6b-v2, which the README says.
 const Default = "parakeet-tdt_ctc-110m"
 
-// Catalog is the whole menu: as many of the models the library supports as
-// can be carried easily, since an entry costs a line and nothing is bundled.
-// WER is the Open ASR Leaderboard average over its eight short-form English
-// sets, which is a better guide for dictation than LibriSpeech alone.
+// Catalog is the whole menu: the models that are on the frontier of accuracy
+// for their size, speed or languages, and fit in 6 GB of video memory with
+// room to spare. An entry beaten on all of those at once by another entry is
+// left out, since nobody should pick it.
 //
-//	whisper-base.en                       English, flat cost at any length
-//	parakeet-tdt_ctc-110m      6.6% WER   English, the default
-//	canary-180m-flash                     4 languages at a tenth of the 1b
-//	parakeet-tdt-0.6b-v2       5.4% WER   English
-//	parakeet-tdt-0.6b-v3                  the v2 with 25 European languages
-//	whisper-large-v3-turbo     7.0% WER   99 languages
-//	Qwen3-ASR-0.6B                        30 languages, the widest small one
-//	canary-1b-flash            5.8% WER   en/de/es/fr, and translation
-//	Qwen3-ASR-1.7B                        the 0.6B's next size up
-//	cohere-transcribe-03-2026             14 languages
-//	granite-speech-4.1-2b-nar  4.9% WER   English, no timestamps
-//	canary-qwen-2.5b                      English, an LLM for a decoder
+// WER is the Open ASR Leaderboard's English average over its eight short-form
+// sets, then its German, French and Spanish averages for the models it scores
+// in those. The leaderboard stopped carrying the two smallest, so they have no
+// English figure here; a number invented for them would be worse than the
+// blank.
 //
-// The blanks are models the leaderboard does not carry: whisper-base.en
-// because it only measures large-v3-turbo, and the recent ones because it has
-// not caught up with them. A number invented here would be worse than the
-// blank. Those are in the menu to be tried, not because they are known good.
+//	                                  en    de    fr    es
+//	moonshine-tiny                                            English, the floor
+//	parakeet-tdt_ctc-110m                                     English, the default
+//	canary-180m-flash                 5.5                     en/de/es/fr
+//	granite-speech-5.0-470m-turboctc  5.0                     English, CTC
+//	parakeet-tdt-0.6b-v2              4.7                     English
+//	parakeet-tdt-0.6b-v3              4.9   4.1   5.4   3.7   25 European
+//	whisper-large-v3-turbo            6.4   6.1   6.7   3.9   99 languages
+//	Qwen3-ASR-0.6B                    5.0   6.7   8.8   5.8   30 languages
+//	canary-1b-v2                      5.7   4.1   4.8   3.2   25 European
+//	Qwen3-ASR-1.7B                    4.3   4.0   5.7   3.8   30 languages
+//	cohere-transcribe-03-2026         4.7   3.1   4.0   2.8   14 languages
 //
-// canary-qwen-2.5b is the one architecture here that decodes with a language
-// model rather than an ASR head, which is the only mechanism that could get a
-// technical term right from context instead of from acoustics. It takes no
-// instruction, so unlike Voxtral it cannot be talked into answering with
-// something other than a transcript.
+// The pairs that look redundant are not. parakeet v2 is the better English
+// model and v3 the one with other languages, and the leaderboard's
+// close-microphone sets and the clip measured here agree on the difference:
+// 3.52 against 4.07, and 12.5% against 15.4%. canary-1b-v2 takes the same 25
+// languages as parakeet v3 and transcribes most of them better, at half again
+// the size and a third of the speed. Qwen3-ASR-1.7B is the most accurate
+// English here and cohere the most accurate everything else, and cohere does
+// not take Hindi, Thai, Turkish or Russian, which Qwen3 does.
+//
+// Qwen3-ASR is also the one family here that decodes with a language model
+// rather than an ASR head, which is the only mechanism that could get a
+// technical term right from context instead of from acoustics.
 //
 // Two shapes of model are here, and the difference matters more than the
 // sizes do. Whisper always encodes a padded 30 second window, so it costs the
@@ -140,51 +148,36 @@ const Default = "parakeet-tdt_ctc-110m"
 //
 // So the flat cost is a liability up to about 30 seconds and an asset past
 // it. Dictation is mostly short utterances, which is why the menu leads with
-// the models that scale with the audio.
+// the models that scale with the audio, and why the small whispers are gone:
+// parakeet-tdt_ctc-110m beats whisper-base.en on accuracy and on every length
+// of dictation, and moonshine-tiny beats whisper-tiny.en at a smaller size.
+// whisper-large-v3-turbo stays for its languages, which nothing else covers.
 //
-// The same window makes whisper the only family whose memory is flat too: its
-// compute buffers cost the same 0.10 GiB on one second of audio as on five
-// minutes, where every other family here grows with the length until the card
-// cannot hold the graph (see Audio length in CLAUDE.md). That is why both
-// whispers stay. whisper-large-v3-turbo has languages the others lack, and
-// whisper-base.en is the cheap way to transcribe something long on a card
-// with nothing to spare, which nothing else in this menu can do at all.
-//
-// Two .en whispers were dropped once there was something to compare them
-// against. whisper-small.en at 184 MiB was beaten by parakeet-tdt_ctc-110m at
-// 96, and whisper-tiny.en at 42 MiB by moonshine-tiny at 33: beaten outright
-// on size and accuracy at once, which is the bar for leaving one out.
-//
-// moonshine-tiny is the floor: worth it only where nothing else fits.
-// granite is the ceiling on accuracy, and cohere-transcribe on size; both are
-// big enough that the cache budget will evict something to hold them.
-//
-// parakeet-tdt-0.6b-v3 is here beside v2 rather than instead of it. Nine more
-// mebibytes buys twenty-four more languages, and it does cost English accuracy
-// to get them: 4.07 against 3.52 on the leaderboard's close-microphone sets,
-// and 15.4% against 12.5% on the clip measured here. Two measurements agreeing
-// is why the README names v2 and not v3.
+// moonshine-tiny is the floor: worth it only where nothing else fits. The
+// largest entry, Qwen3-ASR-1.7B, peaked at 2.8 GiB of an RTX 4070's memory
+// warming to 30 seconds and transcribing 35.
 var Catalog = []Spec{
 	{"moonshine-tiny", "Q8_0", 33, []string{"en"}},
-	{"whisper-base.en", "Q5_K_M", 60, []string{"en"}},
 	{"parakeet-tdt_ctc-110m", "Q5_K_M", 96, []string{"en"}},
 	{"canary-180m-flash", "Q5_K_M", 151, []string{"en", "de", "es", "fr"}},
+	{"granite-speech-5.0-470m-turboctc", "Q5_K_M", 320, []string{"en"}},
 	{"parakeet-tdt-0.6b-v2", "Q5_K_M", 514, []string{"en"}},
-	{"parakeet-tdt-0.6b-v3", "Q5_K_M", 523, []string{
-		"en", "bg", "cs", "da", "de", "el", "es", "et", "fi", "fr", "hr", "hu",
-		"it", "lt", "lv", "mt", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "uk"}},
+	{"parakeet-tdt-0.6b-v3", "Q5_K_M", 523, european25},
 	{"whisper-large-v3-turbo", "Q5_K_M", 590, nil},
 	{"Qwen3-ASR-0.6B", "Q5_K_M", 615, qwen3Langs},
-	{"canary-1b-flash", "Q5_K_M", 733, []string{"en", "de", "es", "fr"}},
+	{"canary-1b-v2", "Q5_K_M", 797, european25},
 	{"Qwen3-ASR-1.7B", "Q5_K_M", 1447, qwen3Langs},
 	{"cohere-transcribe-03-2026", "Q5_K_M", 1688, []string{
 		"en", "ar", "de", "el", "es", "fr", "it", "ja", "ko", "nl", "pl", "pt", "vi", "zh"}},
-	{"granite-speech-4.1-2b-nar", "Q5_K_M", 1699, []string{"en", "de", "es", "fr", "pt"}},
-	{"canary-qwen-2.5b", "Q5_K_M", 1891, []string{"en"}},
 }
 
+// european25 is the set parakeet-tdt-0.6b-v3 and canary-1b-v2 both advertise.
+var european25 = []string{
+	"en", "bg", "cs", "da", "de", "el", "es", "et", "fi", "fr", "hr", "hu",
+	"it", "lt", "lv", "mt", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "uk"}
+
 // qwen3Langs is the set both Qwen3-ASR sizes advertise, which is the same set.
-// Nothing writes to a Spec's Langs, so the two entries can share it.
+// Nothing writes to a Spec's Langs, so entries can share one.
 var qwen3Langs = []string{
 	"en", "ar", "cs", "da", "de", "el", "es", "fa", "fi", "fil", "fr", "hi",
 	"hu", "id", "it", "ja", "ko", "mk", "ms", "nl", "pl", "pt", "ro", "ru",

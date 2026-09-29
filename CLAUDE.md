@@ -51,14 +51,15 @@ never implicitly.
   cuts long audio differently and that changes the transcript.
 - `cmd/warmbench/` - measures what each rehearsal length compiles, which is how
   the bucket set is chosen rather than guessed.
-- `internal/models` - the menu: thirteen entries, none bundled, all fetched
+- `internal/models` - the menu: eleven entries, none bundled, all fetched
   from the `handy-computer` GGUF repos into `~/.cache/diktat/models`, so no
-  model is a special case. Ordered by download size, which is roughly the cost
-  order, and the number in that listing is how models get selected. The
-  language set per model is hand-kept, because the menu has to answer before a
-  model is downloaded; a test checks it against the library for whatever is
-  present. Several entries are recent enough to have no published accuracy
-  figure and are there to be tried, not because they are known good.
+  model is a special case. An entry is there because nothing else on the menu
+  beats it on accuracy, size, speed and languages at once, and nothing needs
+  more than 6 GB of video memory. Ordered by download size, which is roughly
+  the cost order, and the number in that listing is how models get selected.
+  The language set per model is hand-kept, because the menu has to answer
+  before a model is downloaded; a test checks it against the library for
+  whatever is present.
 - `internal/asr` - one `Model` over transcribe.cpp: load, transcribe, and what
   it costs. Picks the discrete GPU when there is one.
 - `internal/audio` - capture through malgo, plus the length buckets and the
