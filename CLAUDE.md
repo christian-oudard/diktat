@@ -138,13 +138,12 @@ is plausible and the wrong one puts a dictation on the wrong screen.
 Built with ggml's Vulkan backend, not CUDA: Vulkan is in the binary cache,
 needs no unfree toolchain, and covers Intel and AMD as well as NVIDIA.
 
-The library takes the first device that is a GPU *or* an integrated GPU, so on
-a hybrid laptop it lands on the Intel chip instead of the discrete card. An
+The library prefers a discrete GPU but falls back to an integrated one. An
 iGPU shares memory bandwidth with the CPU it would be replacing and is no clear
 win, so `placement` in `internal/asr` walks the devices for a discrete GPU,
-skips integrated ones, and pins `LoadOptions.GPUDevice`. No discrete device
-means CPU. `DIKTAT_GPU=0` forces CPU, `=1` takes whatever the library would
-have picked unaided.
+skips integrated ones, and pins `LoadOptions.Device`. No discrete device means
+CPU. `DIKTAT_GPU=0` forces CPU, `=1` takes whatever the library would have
+picked unaided.
 
 ## Warmup
 

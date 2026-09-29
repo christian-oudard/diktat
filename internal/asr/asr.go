@@ -97,11 +97,10 @@ func since(mark int) string {
 type Model struct {
 	s    *transcribe.Session
 	name string
-	// gpu is the device it landed on, or "" for CPU, and device is its index
-	// among the registered devices, which is what the runtime's per-device
-	// queries take.
+	// gpu names the device it landed on, or is "" for CPU, and device is
+	// that device, which is what the runtime's per-device queries take.
 	gpu    string
-	device int
+	device transcribe.Device
 	// resident is what the weights and the context cost on the device, and
 	// graph is what the compute buffers have grown to on top of them. longest
 	// is the longest clip run so far, which is the length graph was measured
@@ -194,11 +193,16 @@ func Load(path string) (*Model, error) {
 		// library could not read, which is the whole question.
 		return nil, fmt.Errorf("%s: %w%s", filepath.Base(path), err, since(mark))
 	}
+	device, err := s.Model().Device()
+	if err != nil {
+		s.Close()
+		return nil, fmt.Errorf("%s: %w", filepath.Base(path), err)
+	}
 	m := &Model{
 		s:        s,
 		name:     strings.TrimSuffix(filepath.Base(path), ".gguf"),
 		gpu:      gpu,
-		device:   deviceIndex(opts),
+		device:   device,
 		resident: uint64(info.Size()),
 		load:     timings,
 	}
@@ -328,11 +332,11 @@ func (m *Model) free() uint64 {
 	if !m.OnGPU() {
 		return 0
 	}
-	devices, err := transcribe.Devices()
-	if err != nil || m.device < 0 || m.device >= len(devices) {
+	d, err := m.device.Refresh()
+	if err != nil {
 		return 0
 	}
-	return devices[m.device].MemoryFree
+	return d.MemoryFree
 }
 
 // ErrTruncated means the decode hit the model's output budget before it
@@ -426,31 +430,18 @@ func (m *Model) AcceptsExtension(slot transcribe.ExtSlot, kind transcribe.ExtKin
 	return m.s.Model().AcceptsExtension(slot, kind)
 }
 
-// deviceIndex is which registered device a load with these options lands on.
-// Zero means the first, which is what the library picks unaided.
-func deviceIndex(opts *transcribe.LoadOptions) int {
-	if opts == nil {
-		return 0
-	}
-	return opts.GPUDevice
-}
-
 // deviceFree is free memory on the device a load with these options will
-// land on, or 0 when the load is going to the CPU or the backend does not
-// report it.
+// land on, or 0 when the load is going to the CPU, is left to the library to
+// place, or the backend does not report it.
 func deviceFree(opts *transcribe.LoadOptions) uint64 {
-	if opts != nil && opts.Backend == transcribe.BackendCPU {
+	if opts == nil || opts.Device == nil {
 		return 0
 	}
-	devices, err := transcribe.Devices()
+	d, err := opts.Device.Refresh()
 	if err != nil {
 		return 0
 	}
-	i := deviceIndex(opts)
-	if i < 0 || i >= len(devices) {
-		return 0
-	}
-	return devices[i].MemoryFree
+	return d.MemoryFree
 }
 
 // CompiledKernels is how many compute kernels this model's device has built
@@ -462,7 +453,7 @@ func deviceFree(opts *transcribe.LoadOptions) uint64 {
 // the warmup did not cover what the user just said. It is the difference
 // between knowing and guessing about warmth, and it costs a device query.
 func (m *Model) CompiledKernels() uint64 {
-	return transcribe.CompiledKernels(m.device)
+	return m.device.CompiledKernels()
 }
 
 // CompiledKernelNames are those kernels, in the order they were built, or nil
@@ -474,17 +465,16 @@ func (m *Model) CompiledKernels() uint64 {
 // dimensions took the aligned path. That is the band structure the warmup
 // buckets have to cover, read off the backend instead of inferred from a sweep.
 func (m *Model) CompiledKernelNames() []string {
-	return transcribe.CompiledKernelNames(m.device)
+	return m.device.CompiledKernelNames()
 }
 
 // placement decides where compute runs, and names the device it chose.
 //
-// The library takes the first GPU it finds, integrated or not, so on a hybrid
-// laptop it can land on the Intel chip rather than the discrete card. An iGPU
-// shares memory bandwidth with the CPU it would be replacing and is no clear
-// win, so pick the discrete one explicitly and stay on the CPU when there is
-// none. DIKTAT_GPU overrides: 0 forces CPU, 1 takes whatever the library
-// would have picked unaided, including an integrated GPU.
+// The library prefers a discrete GPU but settles for an integrated one. An
+// iGPU shares memory bandwidth with the CPU it would be replacing and is no
+// clear win, so pick the discrete one explicitly and stay on the CPU when
+// there is none. DIKTAT_GPU overrides: 0 forces CPU, 1 takes whatever the
+// library would have picked unaided, including an integrated GPU.
 func placement() (*transcribe.LoadOptions, string, error) {
 	if v, err := strconv.ParseBool(os.Getenv("DIKTAT_GPU")); err == nil {
 		if !v {
@@ -501,12 +491,7 @@ func placement() (*transcribe.LoadOptions, string, error) {
 	if i < 0 {
 		return &transcribe.LoadOptions{Backend: transcribe.BackendCPU}, "", nil
 	}
-	// Index 0 is not selectable explicitly, since zero means auto, but a
-	// device that is first in probe order is what auto picks anyway.
-	if i == 0 {
-		return nil, devices[0].Description, nil
-	}
-	return &transcribe.LoadOptions{GPUDevice: i}, devices[i].Description, nil
+	return &transcribe.LoadOptions{Device: &devices[i]}, devices[i].Description, nil
 }
 
 // discrete is the index of the first discrete GPU, or -1 when the machine has
