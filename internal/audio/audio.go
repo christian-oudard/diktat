@@ -194,6 +194,16 @@ func (r *Recorder) Start() {
 	r.mu.Unlock()
 }
 
+// Drain returns the samples accumulated so far and keeps recording, for a
+// caller that writes a capture out as it goes rather than holding all of it.
+func (r *Recorder) Drain() []int16 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := r.buf
+	r.buf = nil
+	return out
+}
+
 // Stop disarms the recorder and returns the accumulated samples.
 func (r *Recorder) Stop() []int16 {
 	r.mu.Lock()

@@ -23,6 +23,7 @@ var commands = []command{
 	{"toggle", "", "Start or stop recording.", runToggle, false},
 	{"repeat", "", "Repeat the last transcription, typing the text again.", runRepeat, false},
 	{"model", "[<model>]", "List, switch, or fetch voice transcription models.", runModel, false},
+	{"record", "", "Record the microphone to a compressed file in this directory.", runRecord, false},
 	{"transcribe", "<recording>", "Transcribe a recording into a document with speaker labels.", runTranscribe, false},
 	{"tx-model", "[<pipeline>]", "List, choose, or fetch speaker-labelled transcription models.", runTxModel, false},
 	{"version", "", "Report the build, and whether the daemon matches it.", runVersion, false},

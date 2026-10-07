@@ -24,7 +24,7 @@ never implicitly.
 ## Layout
 
 - `cmd/diktat/` - the shipped binary, one file per subcommand: daemon, toggle,
-  repeat, model, version. `main.go` holds the dispatch table. The zsh
+  repeat, model, record, version. `main.go` holds the dispatch table. The zsh
   completion in `completions/` reads the command list back out of `--help`
   rather than keeping a copy, since the copy drifted. The nix build stamps the
   revision and commit date in through ldflags; the date uses a `T` rather than

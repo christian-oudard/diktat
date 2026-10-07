@@ -111,3 +111,21 @@ func TestAppendSamplesPartialFinalChunk(t *testing.T) {
 		t.Errorf("buffer is %d samples, want the cap of %d", len(r.buf), maxSamples)
 	}
 }
+
+func TestDrainKeepsEverythingPastTheCap(t *testing.T) {
+	defer func(n int) { maxSamples = n }(maxSamples)
+	maxSamples = 5 * SampleRate
+
+	r := &Recorder{}
+	r.Start()
+	chunk := make([]int16, SampleRate)
+	total := 0
+	for i := 0; i < 3*maxSamples/SampleRate; i++ {
+		r.appendSamples(chunk)
+		total += len(r.Drain())
+	}
+	total += len(r.Stop())
+	if want := 3 * maxSamples; total != want {
+		t.Errorf("drained %d samples, want all %d", total, want)
+	}
+}

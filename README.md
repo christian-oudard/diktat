@@ -79,6 +79,8 @@ bindsym XF86HangupPhone exec diktat repeat
 First, select and download a transcription pipeline:
 `$ diktat tx-model`
 
+To record one, run `$ diktat record` and press Ctrl-C when done. It saves a compressed `recording-<date>.opus` in the current directory.
+
 Then, create a transcript with `$ diktat transcribe <filename>`. This outputs a markdown file, `<filename>_transcript.md`.
 
 By default, the transcription model will attempt to guess how many speakers are present in the recording, but sometimes it gets this wrong. For better accuracy, you can specify the number of speakers:
