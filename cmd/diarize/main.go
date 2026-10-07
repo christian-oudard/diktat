@@ -70,35 +70,23 @@ func main() {
 	if err := models.Check(modelPath); err != nil {
 		log.Fatalf("%v", err)
 	}
-	model, err := asr.Load(modelPath)
+	model, err := asr.LoadDiarizer(modelPath)
 	if err != nil {
-		log.Fatalf("load model: %v", err)
+		log.Fatalf("load diarizer: %v", err)
 	}
 	defer model.Close()
-	if !model.Supports(transcribe.FeatureDiarization) {
-		log.Fatalf("%s does not diarize", model.Name())
-	}
 	fmt.Printf("%s, %s resident\n", model.Arch(), human.Bytes(model.Bytes()))
 
-	// Punctuation asked for rather than left to the family default, which for
-	// the multitalker parakeet is off: the first run of the whole recording
-	// came back as 109 minutes of unbroken lowercase, which is not a
-	// transcript anyone can read.
-	//
-	// Timestamps stay on Auto, which is the finest the model has and is never
-	// rejected. Asking for words outright is: a diarizer produces no text to
-	// hang them on, and sortformer fails the run rather than ignoring it.
-	opts := &transcribe.RunOptions{Diarize: transcribe.ModeOn, PNC: transcribe.ModeOn}
-	// The preset rides the run slot even though it is a stream setting, since
-	// sortformer streams inside one run. A model that takes no such extension
-	// fails the run rather than ignoring it, so ask before setting it.
-	if model.AcceptsExtension(transcribe.SlotRun, transcribe.KindSortformerStream) {
-		opts.Family = &transcribe.SortformerStreamOptions{Preset: transcribe.Opt(point)}
+	// A model that takes no such extension fails the run rather than
+	// ignoring it, so ask before setting it.
+	var ext transcribe.DiarizeExtension
+	if model.AcceptsExtension(transcribe.KindSortformerDiarize) {
+		ext = &transcribe.SortformerDiarizeOptions{Preset: transcribe.Opt(point)}
 	}
 
 	fmt.Printf("diarizing %s...\n", clip.Round(time.Second))
 	t0 := time.Now()
-	res, err := model.Run(context.Background(), samples, opts)
+	rows, err := model.Run(context.Background(), samples, ext)
 	if err != nil {
 		log.Fatalf("diarize: %v", err)
 	}
@@ -106,17 +94,6 @@ func main() {
 	fmt.Printf("%s, %sx realtime\n\n", elapsed.Round(time.Millisecond),
 		speedup(clip, elapsed))
 
-	// A joint model transcribes and attributes in one pass, so its segments
-	// already carry a speaker. Printing them is what says whether the
-	// attribution is any good: talk time alone cannot tell a real third
-	// speaker from a clustering artefact, and a line of dialogue can.
-	for _, s := range res.Segments {
-		if s.Speaker > 0 {
-			fmt.Printf("[%s] S%02d: %s\n", s.Start.Round(time.Second), s.Speaker, s.Text)
-		}
-	}
-
-	rows := res.SpeakerSegments
 	if len(rows) == 0 {
 		log.Fatal("no speaker rows: the model heard nobody")
 	}

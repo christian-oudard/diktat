@@ -108,10 +108,12 @@ moves to `StreamFailed` and `StreamLastStatus` keeps `ErrAborted`.
 
 ## Family extensions
 
-Knobs that only one architecture has ride `RunOptions.Family` and
-`StreamOptions.Family`: `WhisperRunOptions`, `SortformerStreamOptions`,
-`ParakeetStreamOptions`, `ParakeetBufferedStreamOptions`,
-`MoonshineStreamingOptions` and `VoxtralRealtimeStreamOptions`.
+Knobs that only one architecture has ride `RunOptions.Family`,
+`StreamOptions.Family` and the extension passed to `DiarizeSession.Run`:
+`WhisperRunOptions`; `ParakeetStreamOptions`,
+`ParakeetBufferedStreamOptions`, `MoonshineStreamingOptions` and
+`VoxtralRealtimeStreamOptions`; and `SortformerDiarizeOptions` and
+`TitanetDiarizeOptions`.
 
 A kind is legal in exactly one slot, and the Go types enforce that at
 compile time: a stream extension does not satisfy `RunExtension`, so it

@@ -447,6 +447,14 @@ func (s *Session) RunBatch(ctx context.Context, pcm [][]float32, opts *RunOption
 // and returns the function that removes it again. A context that can never
 // be cancelled installs nothing.
 func (s *Session) watch(ctx context.Context) func() {
+	return watchAbort(ctx, func(cb C.transcribe_abort_callback, cell unsafe.Pointer) {
+		C.transcribe_set_abort_callback(s.c, cb, cell)
+	})
+}
+
+// watchAbort points a session's abort callback at ctx through set, and
+// returns the function that unhooks it.
+func watchAbort(ctx context.Context, set func(C.transcribe_abort_callback, unsafe.Pointer)) func() {
 	if ctx == nil || ctx.Done() == nil {
 		return func() {}
 	}
@@ -457,9 +465,9 @@ func (s *Session) watch(ctx context.Context) func() {
 	cell := C.malloc(C.size_t(unsafe.Sizeof(C.uintptr_t(0))))
 	*(*C.uintptr_t)(cell) = C.uintptr_t(h)
 
-	C.transcribe_set_abort_callback(s.c, C.transcribe_abort_callback(C.transcribeAbortTrampoline), cell)
+	set(C.transcribe_abort_callback(C.transcribeAbortTrampoline), cell)
 	return func() {
-		C.transcribe_set_abort_callback(s.c, nil, nil)
+		set(nil, nil)
 		C.free(cell)
 		h.Delete()
 	}

@@ -15,6 +15,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -99,6 +100,10 @@ func cached() []string {
 func describe(path string) {
 	name := strings.TrimSuffix(filepath.Base(path), ".gguf")
 	model, err := asr.Load(path)
+	if errors.Is(err, transcribe.ErrUnsupportedRole) {
+		fmt.Printf("%-42s  diarizer, no text\n", name)
+		return
+	}
 	if err != nil {
 		fmt.Printf("%-42s  %v\n", name, err)
 		return

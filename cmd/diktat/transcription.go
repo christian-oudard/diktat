@@ -336,43 +336,44 @@ func speechIn(p models.Pipeline, samples []float32, clip time.Duration) []transc
 
 func speakerRows(path string, samples []float32, clip time.Duration, speech []transcribe.Span,
 	speakers int, line silence.Timeline) []transcript.Row {
-	model := loadPath(path)
-	defer model.Close()
-	if !model.Supports(transcribe.FeatureDiarization) {
-		log.Fatalf("%s does not diarize", model.Name())
+	model, err := asr.LoadDiarizer(path)
+	if err != nil {
+		log.Fatalf("load diarizer: %v", err)
 	}
+	defer model.Close()
+	log.Printf("%s, %s resident", model.Arch(), human.Bytes(model.Bytes()))
 
-	opts := &transcribe.RunOptions{Diarize: transcribe.ModeOn}
+	var ext transcribe.DiarizeExtension
 	// The published DER is measured at the longest lookahead, which is the one
 	// to want on a file that is already on disk: nothing here is waiting for the
 	// answer in real time. A model that takes no such extension fails the run
 	// rather than ignoring it, so ask before setting it.
-	if model.AcceptsExtension(transcribe.SlotRun, transcribe.KindSortformerStream) {
-		opts.Family = &transcribe.SortformerStreamOptions{
+	if model.AcceptsExtension(transcribe.KindSortformerDiarize) {
+		ext = &transcribe.SortformerDiarizeOptions{
 			Preset: transcribe.Opt(transcribe.SortformerVeryHighLatency)}
 	}
 	// The clustering diarizer, which is the one that takes the speech regions
 	// and the one whose speaker count is an answer rather than a constant.
-	if model.AcceptsExtension(transcribe.SlotRun, transcribe.KindTitanetDiarize) {
-		ext := &transcribe.TitanetDiarizeOptions{Speech: speech}
+	if model.AcceptsExtension(transcribe.KindTitanetDiarize) {
+		titanet := &transcribe.TitanetDiarizeOptions{Speech: speech}
 		if speakers > 0 {
-			ext.Speakers = &speakers
+			titanet.Speakers = &speakers
 		}
-		opts.Family = ext
+		ext = titanet
 	} else if speakers > 0 {
 		log.Fatalf("%s attributes a fixed number of speakers and cannot be told how many", model.Name())
 	}
 	t0 := time.Now()
-	res, err := model.Run(context.Background(), samples, opts)
+	segments, err := model.Run(context.Background(), samples, ext)
 	if err != nil {
 		log.Fatalf("diarize: %v", err)
 	}
-	if len(res.SpeakerSegments) == 0 {
+	if len(segments) == 0 {
 		log.Fatal("no speaker rows: the diarizer heard nobody")
 	}
-	rows := make([]transcript.Row, 0, len(res.SpeakerSegments))
+	rows := make([]transcript.Row, 0, len(segments))
 	seen := map[int]bool{}
-	for _, r := range res.SpeakerSegments {
+	for _, r := range segments {
 		rows = append(rows, transcript.Row{Speaker: r.Speaker,
 			Start: line.Original(r.Start), End: line.Original(r.End)})
 		seen[r.Speaker] = true

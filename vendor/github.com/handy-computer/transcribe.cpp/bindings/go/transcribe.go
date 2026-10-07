@@ -116,6 +116,8 @@ const (
 	ErrUnsupportedITN      Status = C.TRANSCRIBE_ERR_UNSUPPORTED_ITN
 	ErrInputTooLong        Status = C.TRANSCRIBE_ERR_INPUT_TOO_LONG
 	ErrOutputTruncated     Status = C.TRANSCRIBE_ERR_OUTPUT_TRUNCATED
+	ErrOutputRepetition    Status = C.TRANSCRIBE_ERR_OUTPUT_REPETITION
+	ErrUnsupportedRole     Status = C.TRANSCRIBE_ERR_UNSUPPORTED_ROLE
 )
 
 // Error makes Status usable as an error; the text comes from the library, so

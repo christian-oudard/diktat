@@ -160,15 +160,48 @@ func (m *Model) LoadTimings() LoadTimings { return m.load }
 
 // Load opens a GGUF model and keeps it open.
 func Load(path string) (*Model, error) {
+	var s *transcribe.Session
+	l, err := load(path, func(opts *transcribe.LoadOptions) (err error) {
+		s, err = transcribe.Open(path, opts, nil)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	device, err := s.Model().Device()
+	if err != nil {
+		s.Close()
+		return nil, fmt.Errorf("%s: %w", filepath.Base(path), err)
+	}
+	return &Model{
+		s:        s,
+		name:     l.name,
+		gpu:      l.gpu,
+		device:   device,
+		resident: l.resident,
+		load:     l.timings,
+	}, nil
+}
+
+// loaded is what opening a file cost and where it went.
+type loaded struct {
+	name, gpu string
+	resident  uint64
+	timings   LoadTimings
+}
+
+// load places a model, reads its file through, and hands the path to open,
+// measuring each half and what the model took off the device.
+func load(path string, open func(*transcribe.LoadOptions) error) (loaded, error) {
 	info, err := os.Stat(path)
 	if err != nil {
-		return nil, fmt.Errorf("model: %w", err)
+		return loaded{}, fmt.Errorf("model: %w", err)
 	}
 	quiet.Do(keepComplaints)
 
 	opts, gpu, err := placement()
 	if err != nil {
-		return nil, err
+		return loaded{}, err
 	}
 	// Read the file through once before handing it over. This is a
 	// measurement first: the library reads it again immediately, from the
@@ -178,42 +211,86 @@ func Load(path string) (*Model, error) {
 	// and this is only the half of it that can be timed.
 	read := time.Now()
 	if err := prefetch(path); err != nil {
-		return nil, fmt.Errorf("model: %w", err)
+		return loaded{}, fmt.Errorf("model: %w", err)
 	}
-	timings := LoadTimings{Read: time.Since(read)}
+	l := loaded{
+		name:     strings.TrimSuffix(filepath.Base(path), ".gguf"),
+		gpu:      gpu,
+		resident: uint64(info.Size()),
+		timings:  LoadTimings{Read: time.Since(read)},
+	}
 
 	before := deviceFree(opts)
 	mark := complaintMark()
 	opened := time.Now()
-	s, err := transcribe.Open(path, opts, nil)
-	timings.Open = time.Since(opened)
+	err = open(opts)
+	l.timings.Open = time.Since(opened)
 	if err != nil {
 		// With what the library said about it. "gguf load error" on its own
 		// says a file did not load and nothing about which part of it the
 		// library could not read, which is the whole question.
-		return nil, fmt.Errorf("%s: %w%s", filepath.Base(path), err, since(mark))
-	}
-	device, err := s.Model().Device()
-	if err != nil {
-		s.Close()
-		return nil, fmt.Errorf("%s: %w", filepath.Base(path), err)
-	}
-	m := &Model{
-		s:        s,
-		name:     strings.TrimSuffix(filepath.Base(path), ".gguf"),
-		gpu:      gpu,
-		device:   device,
-		resident: uint64(info.Size()),
-		load:     timings,
+		return loaded{}, fmt.Errorf("%s: %w%s", filepath.Base(path), err, since(mark))
 	}
 	// What the load itself took off the device, which is more than the file:
 	// the weights are joined by the context the session keeps. A backend that
 	// reports no memory leaves the file size standing, which is a floor rather
 	// than an estimate.
 	if after := deviceFree(opts); before > after {
-		m.resident = before - after
+		l.resident = before - after
 	}
-	return m, nil
+	return l, nil
+}
+
+// Diarizer is a loaded model that says who spoke when and writes no text.
+type Diarizer struct {
+	m      *transcribe.Model
+	s      *transcribe.DiarizeSession
+	loaded loaded
+}
+
+// LoadDiarizer opens a GGUF diarization model and keeps it open.
+func LoadDiarizer(path string) (*Diarizer, error) {
+	d := &Diarizer{}
+	l, err := load(path, func(opts *transcribe.LoadOptions) (err error) {
+		if d.m, err = transcribe.LoadModel(path, opts); err != nil {
+			return err
+		}
+		if d.s, err = d.m.NewDiarizeSession(0); err != nil {
+			d.m.Close()
+		}
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	d.loaded = l
+	return d, nil
+}
+
+// Run diarizes a whole recording. ext is nil for the model's defaults.
+func (d *Diarizer) Run(ctx context.Context, samples []float32, ext transcribe.DiarizeExtension) (
+	[]transcribe.SpeakerSegment, error) {
+	return d.s.Run(ctx, samples, ext)
+}
+
+// AcceptsExtension probes for a diarizer's own options, which fail the run
+// when passed to a model that does not take them.
+func (d *Diarizer) AcceptsExtension(kind transcribe.ExtKind) bool {
+	return d.m.AcceptsExtension(transcribe.SlotDiarizeRun, kind)
+}
+
+// Arch names the model and the device it runs on, as Model.Arch does.
+func (d *Diarizer) Arch() string { return arch(d.loaded.name, d.loaded.gpu) }
+
+// Name is the model, as the file it was loaded from calls it.
+func (d *Diarizer) Name() string { return d.loaded.name }
+
+// Bytes is what the model took off its device when it loaded.
+func (d *Diarizer) Bytes() uint64 { return d.loaded.resident }
+
+func (d *Diarizer) Close() {
+	d.s.Close()
+	d.m.Close()
 }
 
 // prefetch reads a file and keeps none of it, so that what it cost to pull off
@@ -568,12 +645,13 @@ func (m *Model) OnGPU() bool { return m.gpu != "" }
 // falling back is silent. The device is named as the driver describes it, so
 // landing on the wrong chip of a hybrid laptop shows up as that chip rather
 // than hiding behind a plain "gpu".
-func (m *Model) Arch() string {
-	where := "cpu"
-	if m.gpu != "" {
-		where = m.gpu
+func (m *Model) Arch() string { return arch(m.name, m.gpu) }
+
+func arch(name, gpu string) string {
+	if gpu == "" {
+		gpu = "cpu"
 	}
-	return m.name + " on " + where
+	return name + " on " + gpu
 }
 
 func (m *Model) Close() {

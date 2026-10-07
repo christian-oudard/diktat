@@ -305,6 +305,10 @@ func (r reader) timings() Timings {
 	} else {
 		C.transcribe_get_timings(r.s.c, &c)
 	}
+	return goTimings(&c)
+}
+
+func goTimings(c *C.struct_transcribe_timings) Timings {
 	fms := func(v C.float) time.Duration {
 		return time.Duration(float64(v) * float64(time.Millisecond))
 	}

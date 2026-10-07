@@ -1,0 +1,7 @@
+dfa0a824443627798bf17da63f295d90a75efd85	refs/cav/agent-tip/agent-2/main
+ce67f0dc72c3ccea4397c2a4935fee1eae4a9ad0	refs/cav/agent-tip/agent-4/main
+ce67f0dc72c3ccea4397c2a4935fee1eae4a9ad0	refs/heads/agent-4/main
+eab380b9a5a450dff3f07ac215425a88ce3028da	refs/heads/backup-before-direnv-scrub
+c2039fe073b4e44dba8e35c4dc8bbd7b664378de	refs/heads/claude/new-session-abxCs
+dfa0a824443627798bf17da63f295d90a75efd85	refs/heads/main
+eab380b9a5a450dff3f07ac215425a88ce3028da	refs/heads/pre-redo
