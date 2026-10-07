@@ -14,4 +14,5 @@ result-*
 
 # Recordings used for benchmarking, which are not distributed.
 *.wav
+*.opus
 /samples/
