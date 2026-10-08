@@ -16,7 +16,6 @@ package wayland
 import (
 	"errors"
 	"log"
-	"os"
 )
 
 // Global is one interface the compositor offers. Name is the compositor's
@@ -87,7 +86,6 @@ func (c *conn) globals(sync uint32) ([]Global, error) {
 		if err != nil {
 			return nil, err
 		}
-		debugf("<- object %d opcode %d, % x", m.object, m.opcode, m.body)
 		switch {
 		case m.object == displayID && m.opcode == displayErrorEvent:
 			return nil, protocolError(m.body)
@@ -117,15 +115,6 @@ func (c *conn) globals(sync uint32) ([]Global, error) {
 	}
 }
 
-// debugf logs the frames of an exchange under DIKTAT_DEBUG, spelled like the
-// daemon's other knobs. Off by default: this is per-insertion and every line
-// of it is noise until a compositor sends something unparseable.
-func debugf(format string, v ...any) {
-	if os.Getenv("DIKTAT_DEBUG") == "" {
-		return
-	}
-	log.Printf("wayland: "+format, v...)
-}
 
 // decodeGlobal reads wl_registry.global: name, interface, version.
 func decodeGlobal(body []byte) (Global, error) {
