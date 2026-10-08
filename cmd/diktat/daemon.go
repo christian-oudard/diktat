@@ -352,6 +352,7 @@ type phraseRun struct {
 	done <-chan struct{}
 	end  int
 	text string
+	took time.Duration
 	err  error
 }
 
@@ -1258,7 +1259,9 @@ func (d *daemon) nextPhrase() {
 		if run.end, run.err = det.End(ctx, pending); run.err != nil || run.end == 0 {
 			return
 		}
+		t0 := time.Now()
 		run.text, run.err = phrase.Transcribe(ctx, model, pending[:run.end])
+		run.took = time.Since(t0)
 	}()
 }
 
@@ -1298,8 +1301,10 @@ func (d *daemon) landPhrase() {
 	if run.text != "" {
 		d.said = append(d.said, run.text)
 	}
+	debugf("Transcribed %.1fs-%.1fs of the recording while it ran, in %s",
+		float64(d.cut)/audio.SampleRate, float64(d.cut+run.end)/audio.SampleRate,
+		run.took.Round(time.Millisecond))
 	d.cut += run.end
-	debugf("Phrase of %.1fs transcribed while recording", float64(run.end)/float64(audio.SampleRate))
 }
 
 func (d *daemon) appendHistory(text string) {

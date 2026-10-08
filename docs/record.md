@@ -5,15 +5,20 @@ the current directory. Esc or Ctrl-C stops it and exits 0, as does SIGINT,
 SIGTERM, or closing the terminal. Other keys, including arrows and other keys
 that begin with an escape byte, are ignored and not echoed.
 
-While it runs, it draws the input level as a row of blocks, one
-per 100 ms of audio, that fills the terminal and wraps like text. Quiet speech
-draws one or two eighths high, medium speech three to five, and loud speech six
-to eight.
+While it runs, it draws the input level as a row of blocks, one per 100 ms of
+audio, that fills the terminal and wraps like text.
 
-A block's height is its level, the RMS of its 100 ms in dBFS, drawn from -45,
-blank, to -5, full height, in eight heights `▁`–`█`, 5 dB each. The range is
-set from labelled takes into a laptop microphone and a headset, where it puts
-quiet, medium and loud speech near those heights on both.
+A block's height shows how hard somebody is speaking, measured against how they
+have been speaking, so that the same voice draws the same height on any
+microphone at any volume. Each block scores its level, the RMS of its 100 ms in
+dBFS, plus 1.5 times its brightness: the energy left after the filter
+`x[n] - 0.95 x[n-1]` relative to the block's whole energy, in dB. A voice pushed
+harder gets brighter as well as louder, and the brightness keeps rising where a
+microphone holds the level near clipping. The speaker's typical score is the
+75th percentile of the blocks that drew in the last 30 seconds; it draws in the
+middle of the height `▄`, and each of the eight heights `▁`–`█` is 5 points, so
+a score 10 above typical draws `▆` and 20 above it full height. The first block
+that draws sets the typical score.
 
 Background noise draws blank. The noise floor is the quietest block level of
 the last five seconds, since speech keeps dropping back to the room between

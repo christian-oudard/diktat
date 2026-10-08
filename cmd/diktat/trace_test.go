@@ -23,22 +23,54 @@ func tone(seconds float64, rms float64) []int16 {
 
 func db(d float64) float64 { return math.Pow(10, d/20) }
 
-func TestHeight(t *testing.T) {
-	for _, c := range []struct {
-		level float64
-		want  int
-	}{
-		{math.Inf(-1), 0},
-		{-80, 0},
-		{-46, 0},
-		{-44, 1},
-		{-26, 4},
-		{-6, 8},
-		{0, 8},
-	} {
-		if got := height(c.level); got != c.want {
-			t.Errorf("height(%v) = %d, want %d", c.level, got, c.want)
+// steady feeds n blocks of a sine at level dBFS.
+func steady(tr *trace, n int, level float64) {
+	for range n {
+		tr.add(sine(level))
+	}
+}
+
+// The speaker's typical level draws at the middle height whatever it is.
+func TestTraceCentresTypicalSpeech(t *testing.T) {
+	for _, level := range []float64{-45, -20} {
+		var out strings.Builder
+		tr := newTrace(&out)
+		tr.add(tone(0.1, 0))
+		steady(tr, 1, -80)
+		steady(tr, 20, level)
+		got := []rune(out.String())
+		if string(got[len(got)-1]) != "▄" {
+			t.Errorf("steady speech at %v dBFS drew %q, want it at the middle height", level, string(got))
 		}
+	}
+}
+
+// Each height is 5 dB from the speaker's typical level.
+func TestTraceDrawsRelativeToTypicalSpeech(t *testing.T) {
+	var out strings.Builder
+	tr := newTrace(&out)
+	steady(tr, 1, -80)
+	steady(tr, 20, -30)
+	out.Reset()
+	for _, level := range []float64{-30, -22, -12, -43} {
+		tr.add(sine(level))
+	}
+	if got := out.String(); got != "▄▆█▁" {
+		t.Errorf("got %q, want %q", got, "▄▆█▁")
+	}
+}
+
+// A voice pushed harder gets brighter as well as louder: at the same level, a
+// bright block draws above a dull one.
+func TestTraceDrawsBrighterHigher(t *testing.T) {
+	var out strings.Builder
+	tr := newTrace(&out)
+	steady(tr, 1, -80)
+	steady(tr, 20, -40)
+	out.Reset()
+	tr.add(tone(0.1, db(-40)))
+	if got := out.String(); got != "█" {
+		t.Errorf("a square wave at the typical level of a sine drew %q, want %q", got, "█")
 	}
 }
 
@@ -47,20 +79,17 @@ func TestTraceDrawsOneBlockPerFrame(t *testing.T) {
 	tr := newTrace(&out)
 	tr.add(sine(-80))
 	tr.add(tone(0.1, 0))
-	tr.add(tone(0.1, db(-6)))
 	tr.add(tone(0.15, db(-26)))
-	if got := out.String(); got != "  █▄" {
-		t.Errorf("got %q, want %q", got, "  █▄")
+	if got := out.String(); got != "  ▄" {
+		t.Errorf("got %q, want %q", got, "  ▄")
 	}
 	// The half frame left over is drawn once the rest of it arrives.
 	tr.add(tone(0.05, db(-26)))
-	if got := out.String(); got != "  █▄▄" {
-		t.Errorf("got %q, want %q", got, "  █▄▄")
+	if got := out.String(); got != "  ▄▄" {
+		t.Errorf("got %q, want %q", got, "  ▄▄")
 	}
 }
 
-// A block shows only its own 100 ms: silence straight after a loud block is
-// drawn blank.
 func TestTraceCarriesNothingOver(t *testing.T) {
 	var out strings.Builder
 	tr := newTrace(&out)
@@ -68,8 +97,8 @@ func TestTraceCarriesNothingOver(t *testing.T) {
 	tr.add(tone(0.1, db(-6)))
 	tr.add(tone(0.1, 0))
 	tr.add(tone(0.1, db(-6)))
-	if got := out.String(); got != " █ █" {
-		t.Errorf("got %q, want %q", got, " █ █")
+	if got := out.String(); got != " ▄ ▄" {
+		t.Errorf("got %q, want %q", got, " ▄ ▄")
 	}
 }
 
@@ -83,8 +112,8 @@ func TestTraceMarksClipping(t *testing.T) {
 	tr.add(loud)
 	loud[500] = 32767
 	tr.add(loud)
-	if got := out.String(); got != " █╋╋" {
-		t.Errorf("got %q, want %q", got, " █╋╋")
+	if got := out.String(); got != " ▄╋╋" {
+		t.Errorf("got %q, want %q", got, " ▄╋╋")
 	}
 }
 
@@ -98,13 +127,12 @@ func sine(level float64) []int16 {
 }
 
 // Steady background noise draws blank once the floor has found it, and a
-// whisper above it draws the lowest height though it is below the scale.
+// whisper far below the speaker's typical level still draws the lowest height.
 func TestTraceBlanksTheBackground(t *testing.T) {
 	var out strings.Builder
 	tr := newTrace(&out)
-	for range noiseWindow {
-		tr.add(sine(-60))
-	}
+	steady(tr, noiseWindow, -60)
+	steady(tr, 20, -30)
 	out.Reset()
 	tr.add(sine(-60))
 	tr.add(sine(-52))
@@ -119,8 +147,8 @@ func TestTraceTakesTheFirstBlockAsTheRoom(t *testing.T) {
 	tr := newTrace(&out)
 	tr.add(sine(-50))
 	tr.add(tone(0.1, db(-6)))
-	if got := out.String(); got != " █" {
-		t.Errorf("got %q, want %q", got, " █")
+	if got := out.String(); got != " ▄" {
+		t.Errorf("got %q, want %q", got, " ▄")
 	}
 }
 
