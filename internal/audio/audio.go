@@ -53,7 +53,6 @@ type Recorder struct {
 	mu     sync.Mutex
 	active bool
 	buf    []int16
-	level  float64
 }
 
 // NewRecorder initializes the miniaudio context and a 16kHz mono 16-bit
@@ -119,23 +118,10 @@ func (r *Recorder) capture(_, in []byte, frameCount uint32) {
 		frameCount = uint32(n)
 	}
 	samples := make([]int16, frameCount)
-	var peak int32
 	for i := range samples {
-		s := int16(binary.LittleEndian.Uint16(in[2*i:]))
-		samples[i] = s
-		// In int32, because negating the most negative int16 gives itself
-		// back: a full-scale negative sample would read as quieter than
-		// silence and the meter would ignore the loudest thing in the frame.
-		a := int32(s)
-		if a < 0 {
-			a = -a
-		}
-		if a > peak {
-			peak = a
-		}
+		samples[i] = int16(binary.LittleEndian.Uint16(in[2*i:]))
 	}
 	r.appendSamples(samples)
-	r.level = float64(peak) / full
 }
 
 // Rebuild closes the capture device and opens a new one, which is how an
@@ -212,14 +198,6 @@ func (r *Recorder) Stop() []int16 {
 	out := r.buf
 	r.buf = nil
 	return out
-}
-
-// Level returns the peak amplitude of the most recent capture callback, for a
-// live meter while recording.
-func (r *Recorder) Level() float64 {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.level
 }
 
 // Close stops the device and releases the context.

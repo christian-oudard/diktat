@@ -14,17 +14,6 @@ func bytes16(samples ...int16) []byte {
 	return out
 }
 
-// A full-scale negative sample is the loudest a frame can be. Negating it in
-// int16 gives it back unchanged and negative, so a meter that stays in int16
-// reads the loudest possible frame as silence.
-func TestLevelSeesFullScaleNegative(t *testing.T) {
-	r := &Recorder{active: true}
-	r.capture(nil, bytes16(-32768, 0, 0, 0), 4)
-	if got := r.Level(); got < 0.99 {
-		t.Errorf("Level = %v for a full-scale negative sample, want about 1", got)
-	}
-}
-
 // The frame count comes from the audio stack and the buffer comes with it.
 // Reading past the end of the buffer is a panic inside a callback from C,
 // which is the daemon disappearing rather than an error anyone can handle.

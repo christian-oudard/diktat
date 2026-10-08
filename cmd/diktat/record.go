@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -48,6 +47,7 @@ func runRecord(args []string) {
 
 	rec.Start()
 	fmt.Fprintf(os.Stderr, "Recording to %s. Press Ctrl-C to stop.\n", out)
+	tr := newTrace(os.Stderr)
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	var n int
@@ -56,6 +56,7 @@ func runRecord(args []string) {
 			log.Fatalf("write %s: %v: %s", out, err, enc.stderr())
 		}
 		n += len(samples)
+		tr.add(samples)
 	}
 loop:
 	for {
@@ -64,8 +65,6 @@ loop:
 			break loop
 		case <-ticker.C:
 			write(rec.Drain())
-			fmt.Fprintf(os.Stderr, "\r  %s  %s  ", meter(rec.Level()),
-				(time.Duration(n) * time.Second / audio.SampleRate).Round(time.Second))
 		}
 	}
 	write(rec.Stop())
@@ -123,12 +122,4 @@ func (e *encoder) finish() error {
 		return fmt.Errorf("ffmpeg: %v: %s", err, e.stderr())
 	}
 	return nil
-}
-
-// meter renders the level as 8 segments on a square-root scale, so quiet
-// input still moves the bars.
-func meter(level float64) string {
-	const n = 8
-	filled := min(int(math.Sqrt(level)*n+0.5), n)
-	return strings.Repeat("█", filled) + strings.Repeat("·", n-filled)
 }
