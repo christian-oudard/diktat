@@ -122,10 +122,18 @@ func readPID(path string) int {
 	if self, err := os.Executable(); err == nil && exe == self {
 		return pid
 	}
-	if filepath.Base(exe) != "diktat" {
+	if !isDiktat(exe) {
 		return 0
 	}
 	return pid
+}
+
+// isDiktat reports whether a binary is some build of diktat. nix's wrapper
+// script execs the real binary as .diktat-wrapped, so that is the name a
+// packaged daemon runs under.
+func isDiktat(exe string) bool {
+	base := filepath.Base(exe)
+	return base == "diktat" || base == ".diktat-wrapped"
 }
 
 // ExePath returns the binary a process is running. Under nix this is the

@@ -63,6 +63,23 @@ func TestReadPIDLiveButNotDiktat(t *testing.T) {
 	}
 }
 
+// Another build of diktat is the daemon too, which is what an upgrade leaves
+// running. Under nix the running binary is the wrapper's target, not the
+// name on PATH.
+func TestIsDiktat(t *testing.T) {
+	for exe, want := range map[string]bool{
+		"/nix/store/abc-diktat-1.0.0/bin/diktat":          true,
+		"/nix/store/abc-diktat-1.0.0/bin/.diktat-wrapped": true,
+		"/home/someone/go/bin/diktat":                     true,
+		"/usr/bin/python3":                                false,
+		"/usr/bin/.python3-wrapped":                       false,
+	} {
+		if got := isDiktat(exe); got != want {
+			t.Errorf("isDiktat(%q) = %v, want %v", exe, got, want)
+		}
+	}
+}
+
 // A reader sees the old contents or the new ones, never a truncated file: the
 // daemon rewrites these while other processes are reading them, and half a
 // sentence typed by `diktat repeat` is what the old truncate-then-write cost.
