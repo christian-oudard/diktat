@@ -14,7 +14,12 @@ roughly by download size. Each row shows:
   `streaming` means it can transcribe audio while it is still arriving.
 
 A `*` before the number marks the model in use, and a `>` marks one being
-loaded.
+loaded. The model in use is the running daemon's, or with no daemon running,
+the one a daemon started now would load.
+
+If the model in use is not on the menu, `diktat model` exits with an error
+naming it instead of listing, and says to update the installed diktat: a model
+the menu does not know was chosen by a newer one.
 
 The menu answers before anything is downloaded, so languages and features are
 kept by hand, and a test checks them against the library for every model in

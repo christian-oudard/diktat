@@ -40,11 +40,7 @@ func runModel(args []string) {
 // askWhich offers the menu numbers, with an empty answer meaning "leave it
 // alone" so the listing stays usable as a listing.
 func askWhich(inUse string) string {
-	keep := "change nothing"
-	if inUse != "" {
-		keep = "keep " + inUse
-	}
-	prompt("\nSelect 1-%d, or Enter to %s: ", len(models.Catalog), keep)
+	prompt("\nSelect 1-%d, or Enter to keep %s: ", len(models.Catalog), inUse)
 	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
 	if err != nil {
 		prompt("\n")
@@ -55,8 +51,7 @@ func askWhich(inUse string) string {
 
 // listModels numbers the menu, since the names are long and switching by
 // hand is the common case. The name stays in the second column so completion
-// can read it, and the languages go last because that field is the one with
-// no fixed width. It returns the menu name of the model in use, or "".
+// can read it. It returns the menu name of the model in use.
 func listModels() string {
 	// What the marker points at: the running daemon's model where there is
 	// one, and otherwise the model a daemon started now would load. Both
@@ -70,6 +65,10 @@ func listModels() string {
 	// to a 1.8 GiB model is tens of seconds where the menu would otherwise
 	// look like nothing had happened.
 	doing, subject := activity()
+
+	if _, err := inUseEntry(current); err != nil {
+		log.Fatal(err)
+	}
 
 	// The number is right-aligned because the menu is past ten entries, and a
 	// ragged one shifts every column after it on the rows that need it most.
@@ -105,20 +104,20 @@ func listModels() string {
 		// the ability to have one.
 		log.Printf("Warming %s, which is usable meanwhile", busy)
 	}
-	// A model outside the menu gets no marker, so there would otherwise be
-	// nothing anywhere saying what is in use. Say when it is not there: a
-	// remembered choice outlives the menu entry it was made from, so dropping
-	// a model leaves whoever had chosen it pointed at a path that no longer
-	// resolves, and the daemon's failure to load it is a poor place to find
-	// that out.
-	if inUse == "" {
-		missing := ""
-		if models.Check(current) != nil {
-			missing = "  (not there; pick another)"
-		}
-		log.Printf("Using %s%s", current, missing)
-	}
 	return inUse
+}
+
+// inUseEntry finds the menu entry for the model in use. One the menu does not
+// know was chosen by a newer diktat, and a menu with nothing marked would
+// hide that.
+func inUseEntry(path string) (models.Spec, error) {
+	for _, s := range models.Catalog {
+		if s.Path() == path {
+			return s, nil
+		}
+	}
+	return models.Spec{}, fmt.Errorf("the model in use is not on this diktat's menu: %s\n"+
+		"Update the installed diktat to one that lists it.", path)
 }
 
 // tick centres a mark under its header, so a column of them reads as a column
