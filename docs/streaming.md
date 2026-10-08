@@ -119,9 +119,9 @@ different set:
 | nemotron-speech-streaming-en-0.6b | 5.7% | 538 MB | |
 | parakeet-unified-en-0.6b | — | 540 MB | cache-aware and buffered variants |
 
-So the menu grows a streaming section, and `Spec` grows a `Streams bool` --
-kept by hand like `Vocab` and `Langs`, checked against the library by the same
-test.
+The menu's Features column says `streaming` for the models that stream, kept
+by hand like the language sets and checked against the library by the same
+test. parakeet-unified-en-0.6b is the one on the menu so far.
 
 A model that does not stream is not an error under posture A or B: it falls
 back to the offline path, and the daemon says so. Under C it would have to,

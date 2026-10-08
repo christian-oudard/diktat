@@ -116,6 +116,7 @@ const Default = "parakeet-tdt_ctc-110m"
 //	granite-speech-5.0-470m-turboctc  5.0                     English, CTC
 //	parakeet-tdt-0.6b-v2              4.7                     English
 //	parakeet-tdt-0.6b-v3              4.9   4.1   5.4   3.7   25 European
+//	parakeet-unified-en-0.6b          5.9                     English, streams
 //	whisper-large-v3-turbo            6.4   6.1   6.7   3.9   99 languages
 //	Qwen3-ASR-0.6B                    5.0   6.7   8.8   5.8   30 languages
 //	canary-1b-v2                      5.7   4.1   4.8   3.2   25 European
@@ -130,6 +131,11 @@ const Default = "parakeet-tdt_ctc-110m"
 // the size and a third of the speed. Qwen3-ASR-1.7B is the most accurate
 // English here and cohere the most accurate everything else, and cohere does
 // not take Hindi, Thai, Turkish or Russian, which Qwen3 does.
+//
+// parakeet-unified-en-0.6b is the one entry that streams: it can transcribe
+// while the audio is still arriving, so most of the work is done by the time
+// the speaker stops. Its 5.9 is offline; with two seconds of latency it
+// scores 6.1.
 //
 // Qwen3-ASR is also the one family here that decodes with a language model
 // rather than an ASR head, which is the only mechanism that could get a
@@ -163,12 +169,28 @@ var Catalog = []Spec{
 	{"granite-speech-5.0-470m-turboctc", "Q5_K_M", 320, []string{"en"}},
 	{"parakeet-tdt-0.6b-v2", "Q5_K_M", 514, []string{"en"}},
 	{"parakeet-tdt-0.6b-v3", "Q5_K_M", 523, european25},
+	{"parakeet-unified-en-0.6b", "Q5_K_M", 516, []string{"en"}},
 	{"whisper-large-v3-turbo", "Q5_K_M", 590, nil},
 	{"Qwen3-ASR-0.6B", "Q5_K_M", 615, qwen3Langs},
 	{"canary-1b-v2", "Q5_K_M", 797, european25},
 	{"Qwen3-ASR-1.7B", "Q5_K_M", 1447, qwen3Langs},
 	{"cohere-transcribe-03-2026", "Q5_K_M", 1688, []string{
 		"en", "ar", "de", "el", "es", "fr", "it", "ja", "ko", "nl", "pl", "pt", "vi", "zh"}},
+}
+
+var streams = map[string]bool{"parakeet-unified-en-0.6b": true}
+
+// Streams reports whether the model can transcribe audio while it is still
+// arriving.
+func (s Spec) Streams() bool { return streams[s.Name] }
+
+// Features renders what the model can do beyond transcribing a finished clip,
+// for the menu.
+func (s Spec) Features() string {
+	if s.Streams() {
+		return "streaming"
+	}
+	return ""
 }
 
 // european25 is the set parakeet-tdt-0.6b-v3 and canary-1b-v2 both advertise.

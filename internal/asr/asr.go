@@ -461,6 +461,16 @@ func (m *Model) Languages() ([]string, error) {
 	return c.Languages, nil
 }
 
+// Streams reports whether the model can transcribe audio while it is still
+// arriving.
+func (m *Model) Streams() (bool, error) {
+	c, err := m.s.Model().Capabilities()
+	if err != nil {
+		return false, err
+	}
+	return c.SupportsStreaming, nil
+}
+
 // MaxTimestamps is the finest alignment the model can produce. It decides
 // whether a transcript can carry speaker labels: attribution is a join between
 // words and speaker rows, so a model that stamps only whole segments cannot be

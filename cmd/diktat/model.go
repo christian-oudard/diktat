@@ -77,8 +77,8 @@ func listModels() string {
 	for _, s := range models.Catalog {
 		width = max(width, len(s.Name))
 	}
-	fmt.Printf("  %2s %-*s %8s  %s  %s\n",
-		"#", width, "Name", "Size", "Downloaded", "Languages")
+	fmt.Printf("  %2s %-*s %8s  %s  %-14s  %s\n",
+		"#", width, "Name", "Size", "Downloaded", "Languages", "Features")
 	inUse, busy := "", subject
 	for i, s := range models.Catalog {
 		mark := " "
@@ -93,8 +93,8 @@ func listModels() string {
 		if s.Path() == subject {
 			busy = s.Name
 		}
-		fmt.Printf("%s %2d %-*s %8s  %s  %s\n", mark, i+1, width, s.Name, s.Size(),
-			tick(s.Downloaded(), "Downloaded"), s.Languages())
+		fmt.Printf("%s %2d %-*s %8s  %s  %-14s  %s\n", mark, i+1, width, s.Name, s.Size(),
+			tick(s.Downloaded(), "Downloaded"), s.Languages(), s.Features())
 	}
 	switch doing {
 	case "loading":
