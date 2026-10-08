@@ -106,14 +106,17 @@ type Pipeline struct {
 // and says so.
 const DefaultDiarizer = "multitalker-parakeet"
 
-// detector is on every entry, for two jobs. The clustering one needs it to
+// Detector is on every entry, for two jobs. The clustering one needs it to
 // know which windows hold a voice, since loudness cannot tell one from a
 // chair. The rest use it only to shorten the silences before a model is paid
 // by the second to listen to them, which is worth 2 MiB of download: the
 // detector costs 2.0 ms per second of audio where the words models cost 9.2
 // to 43.9, so a recording only has to be a fifth silence to come out ahead,
 // and less than a twentieth against the slowest.
-var detector = Spec{"fsmn-vad", "F32", 2, nil}
+//
+// The daemon uses it too, to find the pauses a dictation can be transcribed
+// up to while it is still being recorded.
+var Detector = Spec{"fsmn-vad", "F32", 2, nil}
 
 var Diarizers = []Pipeline{
 	{
@@ -128,7 +131,7 @@ var Diarizers = []Pipeline{
 			{"parakeet-tdt-0.6b-v2", "Q8_0", 696, []string{"en"}},
 			{"titanet-large", "F16", 43, []string{"en"}},
 		},
-		Speech:   detector,
+		Speech:   Detector,
 		Speakers: 20,
 		Langs:    []string{"en"},
 		Piece:    3 * time.Minute,
@@ -139,7 +142,7 @@ var Diarizers = []Pipeline{
 		Models: []Spec{
 			{"multitalker-parakeet-streaming-0.6b-v1", "Q8_0", 833, []string{"en"}},
 		},
-		Speech:   detector,
+		Speech:   Detector,
 		Speakers: 4,
 		Langs:    []string{"en"},
 		Note:     "one file, one pass; 19.35% cpWER on AMI meetings",
@@ -150,7 +153,7 @@ var Diarizers = []Pipeline{
 			{"parakeet-tdt-0.6b-v2", "Q8_0", 696, []string{"en"}},
 			{"diar_streaming_sortformer_4spk-v2.1", "F16", 226, []string{"en"}},
 		},
-		Speech:   detector,
+		Speech:   Detector,
 		Speakers: 4,
 		Langs:    []string{"en"},
 		Piece:    3 * time.Minute,
@@ -162,7 +165,7 @@ var Diarizers = []Pipeline{
 			{"parakeet-tdt-0.6b-v3", "Q8_0", 706, parakeetV3Langs},
 			{"diar_streaming_sortformer_4spk-v2.1", "F16", 226, []string{"en"}},
 		},
-		Speech:   detector,
+		Speech:   Detector,
 		Speakers: 4,
 		Langs:    parakeetV3Langs,
 		Piece:    3 * time.Minute,
@@ -173,7 +176,7 @@ var Diarizers = []Pipeline{
 		Models: []Spec{
 			{"MOSS-Transcribe-Diarize", "Q8_0", 941, []string{"en", "zh"}},
 		},
-		Speech:   detector,
+		Speech:   Detector,
 		Speakers: 0,
 		Langs:    []string{"en", "zh"},
 		Piece:    2 * time.Minute,
@@ -185,7 +188,7 @@ var Diarizers = []Pipeline{
 			{"MOSS-Transcribe-Diarize", "Q8_0", 941, []string{"en", "zh"}},
 			{"diar_streaming_sortformer_4spk-v2.1", "F16", 226, []string{"en"}},
 		},
-		Speech:   detector,
+		Speech:   Detector,
 		Speakers: 4,
 		Langs:    []string{"en", "zh"},
 		Piece:    2 * time.Minute,
@@ -291,7 +294,7 @@ func LookupDiarizer(nameOrNumber string) (Pipeline, bool) {
 // neither: a pair with one model on disk is not a thing anyone asked for.
 func DownloadPipeline(p Pipeline, progress io.Writer) error {
 	for _, s := range p.All() {
-		if _, err := download(s, progress); err != nil {
+		if _, err := Download(s, progress); err != nil {
 			return err
 		}
 	}

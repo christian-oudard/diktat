@@ -16,19 +16,10 @@ import (
 // per model named after it.
 const hfOrg = "https://huggingface.co/handy-computer"
 
-// Download fetches a menu entry into the cache and returns where it landed.
-// Files already present are left alone, so re-running is cheap. Nothing here
-// downloads on its own: a caller has to ask for a model by name.
-func Download(name string, progress io.Writer) (string, error) {
-	spec, ok := Lookup(name)
-	if !ok {
-		return "", fmt.Errorf("unknown model %q", name)
-	}
-	return download(spec, progress)
-}
-
-// download is the same for a model reached through either menu.
-func download(spec Spec, progress io.Writer) (string, error) {
+// Download fetches a model into the cache and returns where it landed. Files
+// already present are left alone, so re-running is cheap. Nothing here
+// downloads on its own: a caller has to ask for a model.
+func Download(spec Spec, progress io.Writer) (string, error) {
 	if err := os.MkdirAll(Dir(), 0755); err != nil {
 		return "", err
 	}

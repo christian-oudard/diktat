@@ -37,7 +37,8 @@ never implicitly.
   It waits instead, says so on the bar, and loads what `diktat model` names.
   Keeps the model loaded, rehearses
   it between dictations, toggles recording on SIGUSR1, transcribes, types via
-  wtype. Runs for the session: it never starts recording by itself and never
+  wtype. While recording it transcribes each phrase that ends in a pause, so
+  only the last is left when the key is pressed again; see `docs/phrases.md`. Runs for the session: it never starts recording by itself and never
   exits by itself. Signal handlers are installed before the model load, so a
   toggle during startup is queued rather than killing the process. Recording is
   unbounded, since how long an utterance may usefully be is the model's answer
@@ -60,6 +61,10 @@ never implicitly.
   The language set and the streaming flag per model are hand-kept, because the
   menu has to answer before a model is downloaded; a test checks them against
   the library for whatever is present.
+- `internal/phrase` - where a dictation still being recorded can be cut: the
+  voice activity detector, fetched with every model, and the rule for which
+  pause ends a phrase. `cmd/transcribe -live` replays a recording through it
+  and reports the wait after the last word.
 - `internal/asr` - one `Model` over transcribe.cpp: load, transcribe, and what
   it costs. Picks the discrete GPU when there is one.
 - `internal/audio` - capture through malgo, plus the length buckets and the

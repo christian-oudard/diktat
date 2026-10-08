@@ -8,7 +8,7 @@
 // devShell. It lives in Go rather than in a script because it has to run the
 // real pipeline, and a script would have to reimplement it.
 //
-//	go run ./cmd/transcribe [-model <name>] file.wav...
+//	go run ./cmd/transcribe [-model <name>] [-live] recording...
 package main
 
 import (
@@ -26,6 +26,7 @@ import (
 	"github.com/christian-oudard/diktat/internal/audio"
 	"github.com/christian-oudard/diktat/internal/human"
 	"github.com/christian-oudard/diktat/internal/models"
+	"github.com/christian-oudard/diktat/internal/phrase"
 	"github.com/christian-oudard/diktat/internal/warmup"
 	"github.com/christian-oudard/diktat/internal/wav"
 )
@@ -52,6 +53,7 @@ func main() {
 	pnc := fs.Bool("pnc", false, "ask for punctuation and casing rather than taking the family default")
 	limitFlag := fs.Duration("limit", 0, "cut audio at this length instead of what the model can take")
 	name := fs.String("model", models.Default, "model to transcribe with")
+	liveFlag := fs.Bool("live", false, "replay each file as if dictated, transcribing phrases as the pauses arrive")
 	fs.Parse(os.Args[1:])
 
 	modelPath := models.Resolve(*name)
@@ -78,10 +80,22 @@ func main() {
 		human.Bytes(model.Bytes()), model.AudioLimit().Round(time.Second),
 		model.LoadTimings())
 
+	var det *phrase.Detector
+	if *liveFlag {
+		if det, err = phrase.LoadDetector(); err != nil {
+			log.Fatalf("voice activity detector: %v", err)
+		}
+		defer det.Close()
+	}
+
 	for _, path := range fs.Args() {
 		stored, err := load(path)
 		if err != nil {
 			log.Printf("%v", err)
+			continue
+		}
+		if det != nil {
+			live(model, det, path, stored)
 			continue
 		}
 		peak, rms := audio.Levels(stored)
@@ -115,10 +129,10 @@ func main() {
 	}
 }
 
-// load reads a wav into the form a capture is held in, so a file follows
-// exactly the path a recording does.
+// load reads a recording into the form a capture is held in, so a file
+// follows exactly the path a recording does.
 func load(path string) ([]int16, error) {
-	samples, rate, err := wav.ReadWAV(path)
+	samples, rate, err := wav.Read(path)
 	if err != nil {
 		return nil, err
 	}
@@ -126,4 +140,52 @@ func load(path string) ([]int16, error) {
 		return nil, fmt.Errorf("%s: sample rate %d != %d", path, rate, audio.SampleRate)
 	}
 	return audio.Ints(samples), nil
+}
+
+// live replays a file the way the daemon hears a dictation: a quarter second
+// at a time, transcribing up to each pause the detector finds whenever the
+// model is free, and the rest once the file ends. The wait is from the end of
+// the file to the text, which is what the speaker sits through.
+func live(model *asr.Model, det *phrase.Detector, path string, stored []int16) {
+	ctx := context.Background()
+	step := audio.SampleRate / 4
+	var parts []string
+	cut := 0
+	free := time.Duration(0) // when the model is next free, in the file's time
+	for at := step; at < len(stored); at += step {
+		now := time.Duration(at) * time.Second / audio.SampleRate
+		if now < free {
+			continue
+		}
+		t0 := time.Now()
+		end, err := det.End(ctx, stored[cut:at])
+		if err != nil {
+			log.Fatalf("%s: detect: %v", path, err)
+		}
+		if end > 0 {
+			part, err := phrase.Transcribe(ctx, model, stored[cut:cut+end])
+			if err != nil {
+				log.Fatalf("%s: transcribe: %v", path, err)
+			}
+			fmt.Printf("  phrase %5.1fs-%5.1fs at %5.1fs took %6s: %q\n",
+				float64(cut)/audio.SampleRate, float64(cut+end)/audio.SampleRate, now.Seconds(),
+				time.Since(t0).Round(time.Millisecond), part)
+			parts = append(parts, part)
+			cut += end
+		}
+		free = now + time.Since(t0)
+	}
+	clip := time.Duration(len(stored)) * time.Second / audio.SampleRate
+	behind := max(free-clip, 0)
+	t0 := time.Now()
+	tail, err := phrase.Transcribe(ctx, model, stored[cut:])
+	if err != nil {
+		log.Fatalf("%s: transcribe: %v", path, err)
+	}
+	if tail != "" {
+		parts = append(parts, tail)
+	}
+	fmt.Printf("%-24s %5.1fs  last %4.1fs  wait %6s  ->  %q\n", path, clip.Seconds(),
+		float64(len(stored)-cut)/audio.SampleRate, (behind + time.Since(t0)).Round(time.Millisecond),
+		strings.Join(parts, " "))
 }

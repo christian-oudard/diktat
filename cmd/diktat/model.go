@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/christian-oudard/diktat/internal/config"
+	"github.com/christian-oudard/diktat/internal/human"
 	"github.com/christian-oudard/diktat/internal/ipc"
 	"github.com/christian-oudard/diktat/internal/models"
 )
@@ -169,18 +170,35 @@ func switchModel(nameOrNumber string) {
 
 	// Sort the model out before the daemon: a typo is the likelier mistake,
 	// and it is fixable without starting anything.
+	//
+	// The detector comes with every model, since the daemon uses it to
+	// transcribe a dictation while it is still being recorded.
+	var missing []models.Spec
 	if err := models.Check(path); err != nil {
 		if !inMenu {
 			log.Fatalf("unknown model %q", nameOrNumber)
 		}
-		if !confirm(fmt.Sprintf("%s is not downloaded. Fetch it now (%s)?", spec.Name, spec.Size())) {
+		missing = append(missing, spec)
+	}
+	if models.Check(models.Detector.Path()) != nil {
+		missing = append(missing, models.Detector)
+	}
+	if len(missing) > 0 {
+		names := make([]string, len(missing))
+		mib := 0
+		for i, s := range missing {
+			names[i] = s.Name
+			mib += s.MiB
+		}
+		if !confirm(fmt.Sprintf("%s not downloaded. Fetch now (%s)?", strings.Join(names, " and "),
+			human.Bytes(uint64(mib)<<20))) {
 			log.Fatal("cancelled")
 		}
-		p, err := models.Download(spec.Name, os.Stderr)
-		if err != nil {
-			log.Fatal(err)
+		for _, s := range missing {
+			if _, err := models.Download(s, os.Stderr); err != nil {
+				log.Fatal(err)
+			}
 		}
-		path = p
 	}
 
 	// Remember the choice before acting on it, so it holds whether or not a

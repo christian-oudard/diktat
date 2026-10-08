@@ -28,10 +28,12 @@ func emptyConfig() *config.Config { return &config.Config{} }
 // fakeRecorder hands the daemon a capture without a sound card.
 type fakeRecorder struct {
 	samples  []int16
+	drained  []int16
 	rebuilds int
 }
 
 func (f *fakeRecorder) Start()         {}
+func (f *fakeRecorder) Drain() []int16 { out := f.drained; f.drained = nil; return out }
 func (f *fakeRecorder) Stop() []int16  { return f.samples }
 func (f *fakeRecorder) Rebuild() error { f.rebuilds++; return nil }
 func (f *fakeRecorder) Close()         {}
@@ -315,5 +317,26 @@ func TestNoModelIsOnTheBar(t *testing.T) {
 	}
 	if d.model != nil {
 		t.Error("a press loaded a model by itself")
+	}
+}
+
+// A dictation is what was taken in while recording as well as what was left
+// when it stopped. Judged on the remainder alone, a dictation whose speech had
+// all been taken in already would look silent and type nothing.
+func TestStopJudgesTheWholeDictation(t *testing.T) {
+	speech := make([]int16, 16000)
+	for i := range speech {
+		speech[i] = int16(1000 + i%50)
+	}
+	fake := &fakeRecorder{drained: speech, samples: make([]int16, 1600)}
+	d := &daemon{recorder: fake, cfg: emptyConfig()}
+
+	logged := captureLog(t, func() {
+		d.nextPhrase()
+		d.stopRecording()
+	})
+
+	if !strings.Contains(logged, "No model") {
+		t.Errorf("log was %q; want the speech taken in while recording to reach the model", logged)
 	}
 }

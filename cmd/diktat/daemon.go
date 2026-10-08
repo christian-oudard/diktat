@@ -23,6 +23,7 @@ import (
 	"github.com/christian-oudard/diktat/internal/ipc"
 	"github.com/christian-oudard/diktat/internal/models"
 	"github.com/christian-oudard/diktat/internal/output"
+	"github.com/christian-oudard/diktat/internal/phrase"
 	"github.com/christian-oudard/diktat/internal/sco"
 	"github.com/christian-oudard/diktat/internal/suspend"
 	"github.com/christian-oudard/diktat/internal/warmup"
@@ -154,6 +155,13 @@ func runDaemon(args []string) {
 	}
 	defer d.closeModel()
 	defer os.Remove(activityPath)
+	if det, err := phrase.LoadDetector(); err != nil {
+		log.Printf("No voice activity detector (%v), so each dictation is transcribed whole when it stops. "+
+			"`diktat model` fetches it.", err)
+	} else {
+		d.detector = det
+		defer det.Close()
+	}
 	if model == nil {
 		d.restoreStatus()
 	} else {
@@ -171,7 +179,13 @@ func runDaemon(args []string) {
 	defer tick.Stop()
 
 	for {
+		var listen <-chan time.Time
+		if d.listen != nil {
+			listen = d.listen.C
+		}
 		select {
+		case <-listen:
+			d.nextPhrase()
 		case <-tick.C:
 			d.checkSuspend()
 			d.checkLink()
@@ -210,6 +224,7 @@ func runDaemon(args []string) {
 // buffer cannot be filled from outside internal/audio.
 type recorder interface {
 	Start()
+	Drain() []int16
 	Stop() []int16
 	Rebuild() error
 	Close()
@@ -283,6 +298,21 @@ type daemon struct {
 	linkWatch bool
 	linkSeen  bool
 
+	// detector finds the pauses in a dictation while it is recording, so the
+	// phrases before them are transcribed before the key is pressed again;
+	// see docs/phrases.md. Nil when it is not downloaded, and then every
+	// dictation is transcribed whole at the end.
+	detector *phrase.Detector
+	// listen ticks while recording, for the next look at what has been said.
+	listen *time.Ticker
+	// captured is the dictation so far, cut is how much of it the finished
+	// phrases cover, and said is their text. phrase is the run in flight,
+	// which holds the model through busy like any other run.
+	captured []int16
+	cut      int
+	said     []string
+	phrase   *phraseRun
+
 	mu        sync.Mutex
 	recording bool
 }
@@ -311,6 +341,16 @@ type bucketResult struct {
 	compiled uint64
 	// text is what the model made of the rehearsal's known speech, which is
 	// what says it is working at all. See checkProbe.
+	text string
+	err  error
+}
+
+// phraseRun is one look for a finished phrase and, when there is one, its
+// transcription. The goroutine fills in end, text and err before closing
+// done, which is what lets the main loop read them.
+type phraseRun struct {
+	done <-chan struct{}
+	end  int
 	text string
 	err  error
 }
@@ -863,6 +903,10 @@ func (d *daemon) startRecording() {
 	d.mu.Lock()
 	d.recording = true
 	d.mu.Unlock()
+	d.captured, d.cut, d.said = d.captured[:0], 0, nil
+	if d.detector != nil {
+		d.listen = time.NewTicker(listenEvery)
+	}
 	// Whatever the rehearsal is on, this utterance wants the model more. The
 	// bucket gives up where it can, which is not instantly, and the wake run
 	// below stands aside if it is still going: a bucket is a graph run too,
@@ -1037,8 +1081,11 @@ func (d *daemon) settle() {
 // transcription is about to want.
 func (d *daemon) stopRecording() {
 	setStatus(statusTx)
-	samples := d.recorder.Stop()
+	d.stopListening()
+	d.take(d.recorder.Stop())
+	samples := d.captured
 	d.settle()
+	d.landPhrase()
 	d.checkProbe()
 	d.mu.Lock()
 	d.recording = false
@@ -1117,30 +1164,18 @@ func (d *daemon) stopRecording() {
 
 	t0 := time.Now()
 	kernels := d.model.CompiledKernelNames()
-	// Only what the model would refuse, or what the card cannot hold, gets cut,
-	// at the quietest moment near the limit. Most families take the whole
-	// utterance and window it themselves, which they do better than a cut here
-	// can: cutting at 30s cost a broken sentence at every seam even on models
-	// that had no limit at all.
-	limit := d.model.AudioLimit()
-	chunks := audio.Chunk(samples, int(limit.Seconds())*audio.SampleRate)
-	if len(chunks) > 1 {
-		log.Printf("Over the %s this model can take now, transcribing in %d pieces",
-			limit.Round(time.Second), len(chunks))
+	last, err := phrase.Transcribe(context.Background(), d.model, samples[d.cut:])
+	if err != nil {
+		log.Printf("transcribe: %v", err)
+		d.failed = true
+		return
 	}
-	var parts []string
-	for _, chunk := range chunks {
-		part, err := d.model.Transcribe(context.Background(), audio.Pad(audio.Floats(chunk)))
-		if err != nil {
-			log.Printf("transcribe: %v", err)
-			d.failed = true
-			return
-		}
-		if part != "" {
-			parts = append(parts, part)
-		}
+	debugf("%d phrases transcribed while recording, then %.1fs after the last",
+		len(d.said), float64(len(samples)-d.cut)/float64(audio.SampleRate))
+	if last != "" {
+		d.said = append(d.said, last)
 	}
-	text := strings.Join(parts, " ")
+	text := strings.Join(d.said, " ")
 	// Anything compiled here is a shape the warmup did not cover, and it is
 	// the reason this transcription was slower than the next one at the same
 	// length will be. Expected past the last warm bucket, a bug below it, and
@@ -1182,6 +1217,89 @@ func (d *daemon) stopRecording() {
 			d.failed = true
 		}
 	}
+}
+
+// listenEvery is how often a recording is looked at for a finished phrase.
+// The detector reads a second of audio in about 5ms, so this costs nothing
+// next to the speech it waits on.
+const listenEvery = 250 * time.Millisecond
+
+// nextPhrase takes in what the microphone has heard since the last look and,
+// when the model is free, starts looking for a finished phrase in what no
+// phrase covers yet and transcribing it.
+func (d *daemon) nextPhrase() {
+	d.take(d.recorder.Drain())
+	if d.busy != nil {
+		select {
+		case <-d.busy:
+			d.busy = nil
+		default:
+			return
+		}
+	}
+	d.landPhrase()
+	// The wake run is over, and what it heard says whether the model still
+	// works, which is worth knowing before the model is given speech that
+	// matters.
+	if d.probing {
+		d.checkProbe()
+		d.restoreStatus()
+	}
+	if d.model == nil {
+		return
+	}
+	done := make(chan struct{})
+	run := &phraseRun{done: done}
+	d.busy, d.phrase = done, run
+	model, det, pending := d.model, d.detector, d.captured[d.cut:]
+	go func() {
+		defer close(done)
+		ctx := context.Background()
+		if run.end, run.err = det.End(ctx, pending); run.err != nil || run.end == 0 {
+			return
+		}
+		run.text, run.err = phrase.Transcribe(ctx, model, pending[:run.end])
+	}()
+}
+
+func (d *daemon) stopListening() {
+	if d.listen != nil {
+		d.listen.Stop()
+		d.listen = nil
+	}
+}
+
+// take adds what the microphone delivered to the dictation, up to the guard
+// against a device that delivers far more than it says, which the recorder
+// applies only between drains.
+func (d *daemon) take(samples []int16) {
+	room := audio.SampleRate*int(audio.RunawayGuard/time.Second) - len(d.captured)
+	d.captured = append(d.captured, samples[:min(len(samples), max(room, 0))]...)
+}
+
+// landPhrase takes in the phrase run that has finished, if there is one. A
+// phrase that failed is said, and the dictation stops looking for more: the
+// transcription at the end covers everything from where the last good phrase
+// stopped, and a failure that would repeat every look is not worth repeating.
+func (d *daemon) landPhrase() {
+	run := d.phrase
+	if run == nil {
+		return
+	}
+	d.phrase = nil
+	if run.err != nil {
+		log.Printf("transcribe a phrase: %v", run.err)
+		d.stopListening()
+		return
+	}
+	if run.end == 0 {
+		return
+	}
+	if run.text != "" {
+		d.said = append(d.said, run.text)
+	}
+	d.cut += run.end
+	debugf("Phrase of %.1fs transcribed while recording", float64(run.end)/float64(audio.SampleRate))
 }
 
 func (d *daemon) appendHistory(text string) {
