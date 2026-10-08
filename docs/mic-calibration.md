@@ -7,9 +7,9 @@ Moonshine a usable signal.
 
 Moonshine returns empty text when the input is too quiet. Empirically the
 threshold is around RMS 0.04. Normal speech should sit at RMS 0.05 or higher.
-The daemon peak-corrects quiet input (see `internal/audio/process.go`), but a
-mic that is muted, low-gain, or narrowband can still fall short. This procedure
-finds where the signal is being lost.
+The daemon hands the model the capture as recorded, so a mic that is muted,
+low-gain, or narrowband falls short as it is. This procedure finds where the
+signal is being lost.
 
 ## 1. Check the capture level
 
@@ -46,12 +46,12 @@ journal when systemd started it:
 $ journalctl --user -u diktat -f
 ```
 
-Each transcription logs the capture's duration, peak, RMS and applied gain,
+Each transcription logs the capture's duration, peak and RMS,
 then what the decode cost and how much text came back. The text itself is
 never logged, so the length is what says whether anything was heard:
 
 ```
-Transcribing <dur>s (wall <w>s, peak <p> rms <r> gain <g>x)...
+Transcribing <dur>s (wall <w>s, peak <p> rms <r>)...
 Transcribed in <t> (mel <m>, encode <e>, decode <d>, other <o>): <n> chars
 ```
 
@@ -60,7 +60,7 @@ Zero chars with low RMS points at the mic. Zero chars with healthy RMS
 
 ## 3. Capture a fixed corpus
 
-To iterate on preprocessing without re-recording, capture a reference WAV
+To compare runs without re-recording, capture a reference WAV
 once. The daemon does not keep captures, so record one deliberately, at the
 rate and shape the daemon asks its own device for:
 
@@ -69,8 +69,8 @@ $ pw-record --rate 16000 --channels 1 --format s16 recording.wav
 ```
 
 Dictating the same sentences through the daemon afterwards gives the levels to
-compare against: its log line reports `peak`, `rms`, and the gain that
-normalization applied, which is what a level meter would have told you. A peak
+compare against: its log line reports `peak` and `rms`, which is what a level
+meter would have told you. A peak
 near zero means no signal is reaching the capture path, even if system meters
 look fine.
 
@@ -91,22 +91,19 @@ Captured `.wav` files are gitignored so voice recordings are never committed.
 ## 4. Run the offline pipeline
 
 `cmd/transcribe` runs the daemon's own pipeline over WAV files, so a change
-to preprocessing can be measured against the same audio every time. It is not
+to the pipeline can be measured against the same audio every time. It is not
 installed, so run it from a checkout:
 
 ```
 $ nix build
 $ go run ./cmd/transcribe recording.wav
-$ go run ./cmd/transcribe -raw recording.wav
 ```
 
-`-raw` skips normalization, so the two runs show what normalization changes.
-Each line prints duration, peak, RMS, gain, and the decoded text.
+Each line prints duration, peak, RMS, time taken, and the decoded text.
 
-Read the numbers this way: if quiet-but-audible speech (RMS above the floor)
-still transcribes empty after normalization, the target RMS or preprocessing
-needs adjusting. If only loud speech ever works, the mic gain is the problem,
-fix it at step 1.
+Read the numbers this way: if speech above the threshold (RMS ~0.04) still
+transcribes empty, the model is the suspect, see step 5. If only loud speech
+ever works, the mic gain is the problem, fix it at step 1.
 
 ## 5. Compare ASR engines
 

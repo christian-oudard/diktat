@@ -15,64 +15,11 @@ func sine(amp float64, n int) []int16 {
 	return s
 }
 
-// peakAfter is the peak of a capture once the gain is applied, which is what
-// the model actually sees.
-func peakAfter(samples []int16, gain float64) float64 {
-	var peak float64
-	for _, s := range Floats(samples, gain) {
-		if a := math.Abs(float64(s)); a > peak {
-			peak = a
-		}
-	}
-	return peak
-}
-
-func TestGainBoostsQuietAudio(t *testing.T) {
-	samples := sine(0.01, SampleRate) // well below a normal level
-	gain := Gain(samples)
-	if gain <= 1 {
-		t.Fatalf("expected gain > 1 for quiet audio, got %.2f", gain)
-	}
-	if peak := peakAfter(samples, gain); math.Abs(peak-normTargetPeak) > 0.05 {
-		t.Errorf("normalized peak = %.3f, want ~%.2f", peak, normTargetPeak)
-	}
-}
-
-func TestGainLeavesSilenceUntouched(t *testing.T) {
-	samples := make([]int16, 1000) // all zeros
-	if gain := Gain(samples); gain != 1 {
-		t.Errorf("silence gain = %.2f, want 1", gain)
-	}
-}
-
-func TestGainLeavesLoudAudioUntouched(t *testing.T) {
-	samples := sine(0.95, SampleRate) // already above the target peak
-	if gain := Gain(samples); gain != 1 {
-		t.Errorf("loud gain = %.2f, want 1", gain)
-	}
-}
-
-func TestGainIgnoresTransients(t *testing.T) {
-	// Quiet speech-level body with one loud click: a true-peak normalizer
-	// would barely boost, but the percentile ignores the click and lifts the
-	// body substantially.
-	samples := sine(0.01, SampleRate)
-	click := 0.95 * float64(full)
-	samples[0] = int16(click)
-	gain := Gain(samples)
-	if gain < 10 {
-		t.Errorf("gain = %.1f, want the body boosted despite the click", gain)
-	}
-	if peak := peakAfter(samples, gain); peak > 1 {
-		t.Errorf("peak after gain = %.3f, want <= 1", peak)
-	}
-}
-
 // The capture's own form round-trips: what the offline tools convert into
 // int16 and back has to be the same audio the model would have heard.
 func TestIntsFloatsRoundTrip(t *testing.T) {
 	in := []float32{0, 0.5, -0.5, 0.999, -0.999}
-	out := Floats(Ints(in), 1)
+	out := Floats(Ints(in))
 	for i := range in {
 		if math.Abs(float64(out[i]-in[i])) > 1e-4 {
 			t.Errorf("sample %d round-tripped %v to %v", i, in[i], out[i])

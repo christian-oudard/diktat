@@ -1,7 +1,6 @@
 // transcribe runs the daemon's own pipeline over WAV files, so a model or a
-// preprocessing change can be measured against fixed audio instead of against
-// a fresh utterance every time. Pass -raw to skip normalization and hear what
-// the model makes of the untouched capture.
+// pipeline change can be measured against fixed audio instead of against a
+// fresh utterance every time.
 //
 // Deliberately not a diktat subcommand: nothing here is part of dictating, so
 // it is not worth a place in the shipped binary. The flake builds only
@@ -9,7 +8,7 @@
 // devShell. It lives in Go rather than in a script because it has to run the
 // real pipeline, and a script would have to reimplement it.
 //
-//	go run ./cmd/transcribe [-raw] [-model <name>] file.wav...
+//	go run ./cmd/transcribe [-model <name>] file.wav...
 package main
 
 import (
@@ -50,7 +49,6 @@ func transcribeWith(m *asr.Model, samples []float32, pnc bool) (string, error) {
 
 func main() {
 	fs := flag.NewFlagSet("transcribe", flag.ExitOnError)
-	raw := fs.Bool("raw", false, "skip normalization")
 	pnc := fs.Bool("pnc", false, "ask for punctuation and casing rather than taking the family default")
 	limitFlag := fs.Duration("limit", 0, "cut audio at this length instead of what the model can take")
 	name := fs.String("model", models.Default, "model to transcribe with")
@@ -87,10 +85,6 @@ func main() {
 			continue
 		}
 		peak, rms := audio.Levels(stored)
-		gain := 1.0
-		if !*raw {
-			gain = audio.Gain(stored)
-		}
 		t0 := time.Now()
 		// Cut and padded like the daemon does it, so a file measures what an
 		// utterance of that length would cost, down to the graph shape.
@@ -101,7 +95,7 @@ func main() {
 		var parts []string
 		fail := false
 		for _, chunk := range audio.Chunk(stored, int(limit.Seconds())*audio.SampleRate) {
-			part, err := transcribeWith(model, audio.Pad(audio.Floats(chunk, gain)), *pnc)
+			part, err := transcribeWith(model, audio.Pad(audio.Floats(chunk)), *pnc)
 			if err != nil {
 				log.Printf("%s: transcribe: %v", path, err)
 				fail = true
@@ -115,8 +109,8 @@ func main() {
 		text := strings.Join(parts, " ")
 		// The first file pays for one-off setup, such as compiling the GPU
 		// shaders, so compare later ones when timing a backend.
-		fmt.Printf("%-24s %5.1fs  peak %.3f  rms %.4f  gain %4.1fx  %6s  ->  %q\n",
-			path, float64(len(stored))/float64(audio.SampleRate), peak, rms, gain,
+		fmt.Printf("%-24s %5.1fs  peak %.3f  rms %.4f  %6s  ->  %q\n",
+			path, float64(len(stored))/float64(audio.SampleRate), peak, rms,
 			time.Since(t0).Round(time.Millisecond), text)
 	}
 }

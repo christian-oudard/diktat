@@ -1073,16 +1073,12 @@ func (d *daemon) stopRecording() {
 	}
 	peak, rms := audio.Levels(samples)
 	silent := audio.IsSilent(samples)
-	// One gain for the whole capture, applied to each piece as it is
-	// converted, so a recording split into chunks does not change loudness
-	// halfway through.
-	gain := audio.Gain(samples)
 	// Audio duration is derived from the sample count at the rate we asked the
 	// device for. If it drifts from the wall clock, the device is not actually
 	// giving us that rate, and the model is seeing time-stretched speech.
-	debugf("Transcribing %.1fs (wall %.1fs, peak %.3f rms %.4f gain %.1fx)...",
+	debugf("Transcribing %.1fs (wall %.1fs, peak %.3f rms %.4f)...",
 		float64(len(samples))/float64(audio.SampleRate), time.Since(d.startedAt).Seconds(),
-		peak, rms, gain)
+		peak, rms)
 
 	// Not one bit set in the whole capture. Either the input is gone, which
 	// on a bluetooth headset outlives the dictation and every one after it,
@@ -1134,7 +1130,7 @@ func (d *daemon) stopRecording() {
 	}
 	var parts []string
 	for _, chunk := range chunks {
-		part, err := d.model.Transcribe(context.Background(), audio.Pad(audio.Floats(chunk, gain)))
+		part, err := d.model.Transcribe(context.Background(), audio.Pad(audio.Floats(chunk)))
 		if err != nil {
 			log.Printf("transcribe: %v", err)
 			d.failed = true
