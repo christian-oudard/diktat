@@ -1,7 +1,9 @@
 # Recording
 
-`diktat record` captures the microphone until Ctrl-C and saves
-`recording-<date>.opus` in the current directory.
+`diktat record` captures the microphone and saves `recording-<date>.opus` in
+the current directory. Esc or Ctrl-C stops it and exits 0, as does SIGINT,
+SIGTERM, or closing the terminal. Other keys, including arrows and other keys
+that begin with an escape byte, are ignored and not echoed.
 
 While it runs, it draws the input level as a row of blocks, one
 per 100 ms of audio, that fills the terminal and wraps like text. Quiet speech
