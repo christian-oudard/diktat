@@ -117,8 +117,7 @@ Downloaded models. Nothing is bundled and nothing is fetched at install time.
 forces the CPU;
 .B 1
 takes whatever GPU the library picks. Unset, a discrete GPU is used when there
-is one and the CPU otherwise, because an integrated GPU shares memory bandwidth
-with the CPU it would be replacing.
+is one, else an integrated GPU, else the CPU.
 .TP
 .B DIKTAT_DEBUG
 Log how things happened as well as what happened: audio levels, per-stage

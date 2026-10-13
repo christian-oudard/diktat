@@ -66,7 +66,7 @@ never implicitly.
   pause ends a phrase. `cmd/transcribe --live` replays a recording through it
   and reports the wait after the last word.
 - `internal/asr` - one `Model` over transcribe.cpp: load, transcribe, and what
-  it costs. Picks the discrete GPU when there is one.
+  it costs. Picks a discrete GPU, else an integrated one, else the CPU.
 - `internal/audio` - capture through malgo, plus the length buckets and the
   chunking rule. A sample count bounds the buffer against a device that lies
   about its frame rate, which an ALSA null device once did to the tune of
@@ -144,12 +144,16 @@ is plausible and the wrong one puts a dictation on the wrong screen.
 Built with ggml's Vulkan backend, not CUDA: Vulkan is in the binary cache,
 needs no unfree toolchain, and covers Intel and AMD as well as NVIDIA.
 
-The library prefers a discrete GPU but falls back to an integrated one. An
-iGPU shares memory bandwidth with the CPU it would be replacing and is no clear
-win, so `placement` in `internal/asr` walks the devices for a discrete GPU,
-skips integrated ones, and pins `LoadOptions.Device`. No discrete device means
-CPU. `DIKTAT_GPU=0` forces CPU, `=1` takes whatever the library would have
-picked unaided.
+`placement` in `internal/asr` pins `LoadOptions.Device` to a discrete GPU,
+else an integrated one, else the CPU. Integrated GPUs were skipped once, on the
+grounds that one shares memory bandwidth with the CPU it would replace, and
+that was never measured. Measured on a laptop's Iris Xe against its own
+i5-1250P, every model on the menu ran 5 to 23 times faster on the integrated
+GPU, warm, and loaded as fast; parakeet-unified-en-0.6b streams there at a
+quarter of real time and on the CPU falls behind it. Discrete still comes
+first, which is what the skipping was for: whisper.cpp once landed on a hybrid
+laptop's Intel chip instead of its card. `DIKTAT_GPU=0` forces CPU, `=1` takes
+whatever the library would have picked unaided.
 
 ## Warmup
 

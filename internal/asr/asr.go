@@ -581,13 +581,13 @@ func (m *Model) CompiledKernelNames() []string {
 	return m.device.CompiledKernelNames()
 }
 
-// placement decides where compute runs, and names the device it chose.
-//
-// The library prefers a discrete GPU but settles for an integrated one. An
-// iGPU shares memory bandwidth with the CPU it would be replacing and is no
-// clear win, so pick the discrete one explicitly and stay on the CPU when
-// there is none. DIKTAT_GPU overrides: 0 forces CPU, 1 takes whatever the
-// library would have picked unaided, including an integrated GPU.
+// placement decides where compute runs, and names the device it chose: a
+// discrete GPU, else an integrated one, else the CPU. An integrated GPU
+// shares memory bandwidth with the CPU, and was once skipped for that, but it
+// is still far faster than the CPU it shares with: measured on an Iris Xe,
+// every model on the menu ran 5 to 23 times faster there. DIKTAT_GPU
+// overrides: 0 forces CPU, 1 takes whatever the library would have picked
+// unaided.
 func placement() (*transcribe.LoadOptions, string, error) {
 	if v, err := strconv.ParseBool(os.Getenv("DIKTAT_GPU")); err == nil {
 		if !v {
@@ -600,20 +600,21 @@ func placement() (*transcribe.LoadOptions, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	i := discrete(devices)
+	i := bestGPU(devices)
 	if i < 0 {
 		return &transcribe.LoadOptions{Backend: transcribe.BackendCPU}, "", nil
 	}
 	return &transcribe.LoadOptions{Device: &devices[i]}, devices[i].Description, nil
 }
 
-// discrete is the index of the first discrete GPU, or -1 when the machine has
-// none. Integrated devices are skipped rather than ranked, for the reason
-// placement gives.
-func discrete(devices []transcribe.Device) int {
-	for i, d := range devices {
-		if d.Type == transcribe.DeviceGPU {
-			return i
+// bestGPU is the index of the first discrete GPU, else of the first
+// integrated one, or -1 when the machine has neither.
+func bestGPU(devices []transcribe.Device) int {
+	for _, kind := range []transcribe.DeviceType{transcribe.DeviceGPU, transcribe.DeviceIGPU} {
+		for i, d := range devices {
+			if d.Type == kind {
+				return i
+			}
 		}
 	}
 	return -1
@@ -625,7 +626,7 @@ func discrete(devices []transcribe.Device) int {
 // backend that owns it, so two devices on one machine both read "vulkan";
 // Type is gpu, igpu, cpu or accel, which is what placement branches on. A
 // report that carried only Kind could not show a hybrid laptop's integrated
-// chip beside its discrete one, which is the case the policy exists for.
+// chip beside its discrete one, which is the choice placement makes.
 type Device struct {
 	Index                   int
 	Name, Description, Kind string
