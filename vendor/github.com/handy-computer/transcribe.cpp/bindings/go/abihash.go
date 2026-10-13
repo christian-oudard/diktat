@@ -18,7 +18,7 @@ package transcribe
 // The per-field struct-layout check is waived, as it is for Swift and Rust,
 // because cgo gets layout from a real compiler. ABICheck covers the other
 // half at runtime: a header and a shared library that have drifted apart.
-const PinnedHeaderHash = "45cce47eebdb1105"
+const PinnedHeaderHash = "156a4706d4a30b23"
 
 // HeaderHash is the public-ABI digest this binding was reviewed against.
 func HeaderHash() string { return PinnedHeaderHash }

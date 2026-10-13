@@ -29,11 +29,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1791394862,
-        "narHash": "sha256-BJADO4oXUmqtRtiF1G+2n+LMehuhLauGd2GXfeXP7+s=",
+        "lastModified": 1791904581,
+        "narHash": "sha256-ppMzEb31wGJ4Y3lWFSOSv+fy4XyG8X1pn4Evo0JhdOs=",
         "owner": "christian-oudard",
         "repo": "transcribe.cpp",
-        "rev": "df604a2ccaf4fbb7616f929c2e03b40fdf93d17c",
+        "rev": "e3a79c35ae9caf3d2d840cec8465c3bd142f49c0",
         "type": "github"
       },
       "original": {
