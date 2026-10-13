@@ -48,6 +48,10 @@ type Pipeline struct {
 	// 15 minute clip comfortably and drifts into another language partway
 	// through it, transcribing the rest of a workshop into Spanish. The same
 	// audio in 2 minute pieces comes back correct.
+	//
+	// Shorter is also faster, since an encoder attends over its whole piece.
+	// On an L4, parakeet took 41s for a 2m50s piece and 5s for a 53s one, and
+	// the minute pieces lost no words.
 	Piece time.Duration
 	// Speech is a voice activity detector run over the whole recording
 	// first, whose regions bound the windows the diarizer clusters. Zero for
@@ -134,7 +138,7 @@ var Diarizers = []Pipeline{
 		Speech:   Detector,
 		Speakers: 20,
 		Langs:    []string{"en"},
-		Piece:    3 * time.Minute,
+		Piece:    time.Minute,
 		Note:     "counts the speakers instead of stopping at four; splits a voice sooner than the fixed-cap entries do",
 	},
 	{
@@ -156,7 +160,7 @@ var Diarizers = []Pipeline{
 		Speech:   Detector,
 		Speakers: 4,
 		Langs:    []string{"en"},
-		Piece:    3 * time.Minute,
+		Piece:    time.Minute,
 		Note:     "the best words, attributed per word to a whole-file speaker track",
 	},
 	{
@@ -168,7 +172,7 @@ var Diarizers = []Pipeline{
 		Speech:   Detector,
 		Speakers: 4,
 		Langs:    parakeetV3Langs,
-		Piece:    3 * time.Minute,
+		Piece:    time.Minute,
 		Note:     "the same, for the 24 languages the v2 does not take",
 	},
 	{

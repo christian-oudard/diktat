@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -93,7 +94,15 @@ func runTranscribe(args []string) {
 	clip := time.Duration(len(samples)) * time.Second / transcript.SampleRate
 	log.Printf("%s of audio, %s", clip.Round(time.Second), p.Name)
 
-	turns := run(p, samples, clip, *chunk, *lang, *diarizer, speakers, *pause)
+	path := *out
+	if path == "" {
+		path = strings.TrimSuffix(fs.Arg(0), filepath.Ext(fs.Arg(0))) + "_transcript.md"
+	}
+	base := strings.TrimSuffix(path, filepath.Ext(path))
+	c := resume(base+".partial.json",
+		jobFor(fs.Arg(0), p.Name, *lang, *diarizer, speakers, *pause, *chunk))
+
+	turns := run(p, samples, clip, *chunk, *lang, *diarizer, speakers, *pause, c)
 	// The entry's speaker cap belongs to the diarizer it names, so it says
 	// nothing about a run that was given a different one.
 	cap := p.Speakers
@@ -104,20 +113,19 @@ func runTranscribe(args []string) {
 		log.Fatal("nothing was transcribed")
 	}
 
-	path := *out
-	if path == "" {
-		path = strings.TrimSuffix(fs.Arg(0), filepath.Ext(fs.Arg(0))) + "_transcript.md"
-	}
 	// The turns beside the document, because rendering is free and transcribing
 	// is not: a change of mind about how a transcript should look must not cost
 	// another run over the audio.
-	if err := writeTurns(strings.TrimSuffix(path, filepath.Ext(path))+".json", turns); err != nil {
+	if err := writeTurns(base+".json", turns); err != nil {
 		log.Printf("could not write the turns: %v", err)
 	}
 	title := strings.TrimSuffix(filepath.Base(fs.Arg(0)), filepath.Ext(fs.Arg(0)))
 	doc := transcript.Render(turns, title, *stamps)
 	if err := os.WriteFile(path, []byte(doc), 0644); err != nil {
 		log.Fatalf("write transcript: %v", err)
+	}
+	if err := os.Remove(c.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Fatal(err)
 	}
 	found := transcript.Speakers(turns)
 	log.Printf("%d turns, %d speakers, written to %s", len(turns), found, path)
@@ -167,7 +175,7 @@ func listLanguages() {
 const defaultPause = time.Second
 
 func run(p models.Pipeline, samples []float32, clip, chunk time.Duration, language, diarizer string,
-	speakers int, pause time.Duration) []transcript.Turn {
+	speakers int, pause time.Duration, c *checkpoint) []transcript.Turn {
 	// Where the speech is, wanted for two different reasons: the clustering
 	// diarizer embeds only windows inside it, and the silences between are
 	// what gets shortened.
@@ -179,19 +187,18 @@ func run(p models.Pipeline, samples []float32, clip, chunk time.Duration, langua
 	// one to an entry that has none. The menu is a set of pairings known to
 	// work; this is for a model that is not in it yet, which is every model the
 	// week it is published.
-	if diarizer != "" {
-		rows := speakerRows(diarizer, samples, clip, speech, speakers, line)
-		model := load(p.Models[0])
-		defer model.Close()
-		spans := spansOf(model, samples, piece(p, model, clip, chunk), language, line)
-		return transcript.Attribute(spans, rows)
+	if diarizer == "" && len(p.Models) == 2 {
+		diarizer = p.Models[1].Path()
 	}
-	if len(p.Models) == 2 {
-		rows := speakerRows(p.Models[1].Path(), samples, clip, speech, speakers, line)
+	if diarizer != "" {
+		if c.Rows == nil {
+			c.Rows = speakerRows(diarizer, samples, clip, speech, speakers, line)
+			c.save()
+		}
 		model := load(p.Models[0])
 		defer model.Close()
-		spans := spansOf(model, samples, piece(p, model, clip, chunk), language, line)
-		return transcript.Attribute(spans, rows)
+		spans := spansOf(model, samples, piece(p, model, clip, chunk), language, line, c)
+		return transcript.Attribute(spans, c.Rows)
 	}
 	model := load(p.Models[0])
 	defer model.Close()
@@ -206,7 +213,9 @@ func run(p models.Pipeline, samples []float32, clip, chunk time.Duration, langua
 		log.Fatalf("%s decides its own speakers and cannot be told how many;"+
 			" pick an entry with a clustering diarizer, such as %q", p.Name, models.Diarizers[0].Name)
 	}
-	return transcribeWhole(p, model, samples, piece(p, model, clip, chunk), language, line)
+	turns := transcribeWhole(p, model, samples, piece(p, model, clip, chunk), language, line)
+	say(os.Stdout, turns)
+	return turns
 }
 
 // shorten takes the long silences out of the audio a model is about to be paid
@@ -391,7 +400,7 @@ func speakerRows(path string, samples []float32, clip time.Duration, speech []tr
 // the reason `cmd/caps` exists: of the models here only the parakeets stamp per
 // token.
 func spansOf(model *asr.Model, samples []float32, limit time.Duration, language string,
-	line silence.Timeline) []transcript.Span {
+	line silence.Timeline, c *checkpoint) []transcript.Span {
 	opts := &transcribe.RunOptions{PNC: transcribe.ModeOn, Language: language}
 	if model.MaxTimestamps() == transcribe.StampsWord {
 		opts.Timestamps = transcribe.StampsWord
@@ -414,9 +423,25 @@ func spansOf(model *asr.Model, samples []float32, limit time.Duration, language 
 		}
 	}
 
+	starts := make([]int, len(cuts))
+	for i, r := range cuts {
+		starts[i] = r.from
+	}
+	c.cutAt(starts)
+	if len(c.Pieces) > 0 {
+		log.Printf("resuming after piece %d of %d", len(c.Pieces), len(cuts))
+	}
 	var spans []transcript.Span
-	for _, r := range cuts {
-		spans = append(spans, spansIn(transcribeAt(model, samples[r.from:r.to], r.at, opts), r.at, line)...)
+	for _, done := range c.Pieces {
+		say(os.Stdout, transcript.Attribute(done, c.Rows))
+		spans = append(spans, done...)
+	}
+	for _, r := range cuts[len(c.Pieces):] {
+		done := spansIn(transcribeAt(model, samples[r.from:r.to], r.at, opts), r.at, line)
+		c.Pieces = append(c.Pieces, done)
+		c.save()
+		say(os.Stdout, transcript.Attribute(done, c.Rows))
+		spans = append(spans, done...)
 	}
 	return spans
 }
