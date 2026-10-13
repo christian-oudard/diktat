@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -1346,6 +1347,11 @@ func (d *daemon) nextPhrase() {
 			return
 		}
 	}
+	// A phrase flashed TX while it was transcribed, and the microphone was
+	// live all along.
+	if d.phrase != nil && d.phrase.end > 0 {
+		d.restoreStatus()
+	}
 	d.landPhrase()
 	// The wake run is over, and what it heard says whether the model still
 	// works, which is worth knowing before the model is given speech that
@@ -1367,6 +1373,7 @@ func (d *daemon) nextPhrase() {
 		if run.end, run.err = det.End(ctx, pending); run.err != nil || run.end == 0 {
 			return
 		}
+		setStatus(statusTx)
 		t0 := time.Now()
 		run.text, run.err = phrase.Transcribe(ctx, model, pending[:run.end])
 		run.took = time.Since(t0)
@@ -1509,4 +1516,24 @@ var statusPath, modelPath, activityPath string
 
 func setStatus(s string) {
 	_ = ipc.Write(statusPath, []byte(s), 0644)
+	refreshBar()
+}
+
+// refreshBar makes the user's i3status reread the status now. It polls once a
+// second at the fastest, and a phrase's TX can come and go between two polls.
+// Replaced in tests, which must not signal the desktop they run on.
+var refreshBar = func() {
+	entries, _ := os.ReadDir("/proc")
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		comm, err := os.ReadFile(filepath.Join("/proc", e.Name(), "comm"))
+		if err != nil || strings.TrimSpace(string(comm)) != "i3status" {
+			continue
+		}
+		// Another user's i3status refuses the signal, which is the right answer.
+		_ = syscall.Kill(pid, syscall.SIGUSR1)
+	}
 }

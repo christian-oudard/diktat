@@ -15,6 +15,9 @@ The phrases' texts are joined with a space, in order, and typed as one text
 when the recording stops, exactly as a dictation transcribed whole would be.
 Nothing is typed while recording.
 
+While a phrase is being transcribed, the bar shows TX, and REC again once it
+is done. Recording carries on throughout.
+
 Each phrase is transcribed without the others, so a model cannot use words
 after a pause to decide words before it. A pause of 0.8 s inside a sentence
 may leave a capital letter or a full stop where the sentence was split.

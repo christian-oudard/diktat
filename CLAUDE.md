@@ -460,6 +460,13 @@ everything between the press and the text. What the daemon happens to be doing
 when the key arrives is not the light's business, and REC through any of that
 says the mic is live when it is not.
 
+TX also flashes mid-recording, for as long as a phrase is being transcribed,
+and REC comes back when it is done; the microphone stays live throughout.
+
+i3status polls the file once a second, the shortest interval it takes, which
+a phrase's flash can fall between. So every write also sends `SIGUSR1` to the
+user's i3status, which makes it redraw at once.
+
 ERR is the one that is about the last press rather than this one: it says the
 press put no words on screen. Three things do that -- no model to transcribe
 with, a microphone that delivered nothing, and text that could not be typed --

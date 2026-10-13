@@ -419,3 +419,25 @@ func TestShutdownFinishesTheDictation(t *testing.T) {
 		t.Errorf("log was %q; want the dictation to have been transcribed", logged)
 	}
 }
+
+// A phrase transcribed mid-recording flashes TX on the bar, and REC comes
+// back once it lands, since the microphone was live all along.
+func TestBarShowsRecAfterAPhrase(t *testing.T) {
+	dir := t.TempDir()
+	statusPath = filepath.Join(dir, "status")
+	activityPath = filepath.Join(dir, "activity")
+	d := &daemon{recorder: &fakeRecorder{}, cfg: emptyConfig()}
+	d.startRecording()
+	setStatus(statusTx) // as the phrase run does when it finds a phrase
+	done := make(chan struct{})
+	close(done)
+	d.busy, d.phrase = done, &phraseRun{done: done, end: 16000, text: "hello"}
+	d.nextPhrase()
+	raw, err := os.ReadFile(statusPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "REC") {
+		t.Errorf("the bar says %q after a phrase landed mid-recording", raw)
+	}
+}
