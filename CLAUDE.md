@@ -490,7 +490,8 @@ Two levels, split by what a line answers. What happened is on by default: the
 model in use, switches, suspends, anything that failed. How it happened is
 behind `DIKTAT_DEBUG`, spelled like `DIKTAT_GPU` because that is the only other
 knob here: audio levels, per-stage transcription timings, the warmup's
-per-length breakdown, and a load's split into waking, reading and opening. The
+per-length breakdown, and a load's split into waking, reading and opening. It
+also keeps every dictation's audio and text on disk; see `docs/debug.md`. The
 split is by frequency as much as by kind, since dictating happens several times
 a minute and buried everything else. A load keeps its total at the default
 level for the inverse reason: it is rare, the user asked for it, and a slow one

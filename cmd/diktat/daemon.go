@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +28,7 @@ import (
 	"github.com/christian-oudard/diktat/internal/sco"
 	"github.com/christian-oudard/diktat/internal/suspend"
 	"github.com/christian-oudard/diktat/internal/warmup"
+	"github.com/christian-oudard/diktat/internal/xdg"
 )
 
 const (
@@ -306,11 +308,11 @@ type daemon struct {
 	// listen ticks while recording, for the next look at what has been said.
 	listen *time.Ticker
 	// captured is the dictation so far, cut is how much of it the finished
-	// phrases cover, and said is their text. phrase is the run in flight,
-	// which holds the model through busy like any other run.
+	// phrases cover, and said is what they were. phrase is the run in
+	// flight, which holds the model through busy like any other run.
 	captured []int16
 	cut      int
-	said     []string
+	said     []spoken
 	phrase   *phraseRun
 
 	mu        sync.Mutex
@@ -343,6 +345,31 @@ type bucketResult struct {
 	// what says it is working at all. See checkProbe.
 	text string
 	err  error
+}
+
+// spoken is one stretch of a dictation and what the model made of it. The
+// tags are for the debug log, which keeps every one.
+type spoken struct {
+	Start  float64 `json:"start"` // seconds into the recording
+	End    float64 `json:"end"`
+	TookMS int64   `json:"took_ms"`
+	Text   string  `json:"text"`
+}
+
+func newSpoken(start, end int, took time.Duration, text string) spoken {
+	return spoken{float64(start) / audio.SampleRate, float64(end) / audio.SampleRate,
+		took.Milliseconds(), text}
+}
+
+// joined is a dictation's text: what each stretch said, in order.
+func joined(said []spoken) string {
+	var parts []string
+	for _, s := range said {
+		if s.Text != "" {
+			parts = append(parts, s.Text)
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 // phraseRun is one look for a finished phrase and, when there is one, its
@@ -1081,6 +1108,7 @@ func (d *daemon) settle() {
 // since it is also what keeps a rehearsal from starting on the model this
 // transcription is about to want.
 func (d *daemon) stopRecording() {
+	pressed := time.Now()
 	setStatus(statusTx)
 	d.stopListening()
 	d.take(d.recorder.Stop())
@@ -1088,6 +1116,7 @@ func (d *daemon) stopRecording() {
 	d.settle()
 	d.landPhrase()
 	d.checkProbe()
+	waited := time.Since(pressed)
 	d.mu.Lock()
 	d.recording = false
 	d.mu.Unlock()
@@ -1118,6 +1147,12 @@ func (d *daemon) stopRecording() {
 		}
 		d.micGone("The microphone delivered nothing at all")
 		return
+	}
+	// Deferred so that writing it is not part of the wait it is kept to
+	// measure.
+	var wait *waitLog
+	if debugEnabled {
+		defer func() { d.keep(pressed, samples, wait) }()
 	}
 	peak, rms := audio.Levels(samples)
 	silent := audio.IsSilent(samples)
@@ -1171,12 +1206,11 @@ func (d *daemon) stopRecording() {
 		d.failed = true
 		return
 	}
+	transcribed := time.Since(t0)
 	debugf("%d phrases transcribed while recording, then %.1fs after the last",
 		len(d.said), float64(len(samples)-d.cut)/float64(audio.SampleRate))
-	if last != "" {
-		d.said = append(d.said, last)
-	}
-	text := strings.Join(d.said, " ")
+	d.said = append(d.said, newSpoken(d.cut, len(samples), transcribed, last))
+	text := joined(d.said)
 	// Anything compiled here is a shape the warmup did not cover, and it is
 	// the reason this transcription was slower than the next one at the same
 	// length will be. Expected past the last warm bucket, a bug below it, and
@@ -1217,6 +1251,68 @@ func (d *daemon) stopRecording() {
 			log.Println("The text is kept; `diktat repeat` types it again.")
 			d.failed = true
 		}
+		wait = &waitLog{time.Since(pressed).Milliseconds(), waited.Milliseconds(),
+			transcribed.Milliseconds(), (time.Since(t0) - transcribed).Milliseconds()}
+		debugf("Typed %dms after the key: %dms waiting on the model, %dms on the last %.1fs, %dms typing",
+			wait.Total, wait.Model, wait.Last, float64(len(samples)-d.cut)/audio.SampleRate, wait.Type)
+	}
+}
+
+// waitLog is how long a dictation took to type after the key stopped it, in
+// milliseconds, and where that went.
+type waitLog struct {
+	Total int64 `json:"total"`
+	Model int64 `json:"model"` // finishing what the model was running
+	Last  int64 `json:"last"`  // transcribing what followed the last phrase
+	Type  int64 `json:"type"`
+}
+
+// debugDir holds what debug mode keeps: each dictation's audio, and
+// dictations.jsonl, which says what was heard in it and how long it took.
+func debugDir() string { return filepath.Join(xdg.CacheDir(), "debug") }
+
+// keep writes a dictation's audio, named for the press that stopped it, and
+// its line in the debug log. wait is nil for a dictation that typed nothing.
+func (d *daemon) keep(pressed time.Time, samples []int16, wait *waitLog) {
+	dir := debugDir()
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		log.Printf("debug: %v", err)
+		return
+	}
+	name := pressed.Format("2006-01-02T15-04-05.000") + ".opus"
+	enc, err := startEncoder(filepath.Join(dir, name))
+	if err != nil {
+		log.Printf("debug: %v", err)
+		return
+	}
+	if err := binary.Write(enc.in, binary.LittleEndian, samples); err != nil {
+		log.Printf("debug: %v: %s", err, enc.stderr())
+	}
+	if err := enc.finish(); err != nil {
+		log.Printf("debug: %v", err)
+		return
+	}
+	line, err := json.Marshal(struct {
+		Audio   string   `json:"audio"`
+		Model   string   `json:"model"`
+		Seconds float64  `json:"seconds"`
+		Text    string   `json:"text"`
+		Phrases []spoken `json:"phrases"`
+		WaitMS  *waitLog `json:"wait_ms"`
+	}{name, filepath.Base(d.modelDir), float64(len(samples)) / audio.SampleRate,
+		joined(d.said), d.said, wait})
+	if err != nil {
+		log.Printf("debug: %v", err)
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "dictations.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		log.Printf("debug: %v", err)
+		return
+	}
+	defer f.Close()
+	if _, err := f.Write(append(line, '\n')); err != nil {
+		log.Printf("debug: %v", err)
 	}
 }
 
@@ -1298,9 +1394,7 @@ func (d *daemon) landPhrase() {
 	if run.end == 0 {
 		return
 	}
-	if run.text != "" {
-		d.said = append(d.said, run.text)
-	}
+	d.said = append(d.said, newSpoken(d.cut, d.cut+run.end, run.took, run.text))
 	debugf("Transcribed %.1fs-%.1fs of the recording while it ran, in %s",
 		float64(d.cut)/audio.SampleRate, float64(d.cut+run.end)/audio.SampleRate,
 		run.took.Round(time.Millisecond))

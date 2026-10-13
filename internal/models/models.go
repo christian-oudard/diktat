@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/christian-oudard/diktat/internal/human"
+	"github.com/christian-oudard/diktat/internal/xdg"
 )
 
 // Spec is one entry in the menu.
@@ -207,11 +208,7 @@ var qwen3Langs = []string{
 
 // Dir is where downloaded models live.
 func Dir() string {
-	if cache := os.Getenv("XDG_CACHE_HOME"); cache != "" {
-		return filepath.Join(cache, "diktat", "models")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".cache", "diktat", "models")
+	return filepath.Join(xdg.CacheDir(), "models")
 }
 
 // File is the GGUF's name, which carries the quantization so two quants of

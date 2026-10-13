@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"log"
 	"os"
 	"path/filepath"
@@ -338,5 +339,64 @@ func TestStopJudgesTheWholeDictation(t *testing.T) {
 
 	if !strings.Contains(logged, "No model") {
 		t.Errorf("log was %q; want the speech taken in while recording to reach the model", logged)
+	}
+}
+
+// Debug mode keeps each dictation's audio and a line saying what was heard in
+// it, together and out of reach of other users, so a slow or wrong dictation
+// can be replayed offline. Without it, nothing is written.
+func TestDebugKeepsTheDictation(t *testing.T) {
+	speech := make([]int16, 16000)
+	for i := range speech {
+		speech[i] = int16(1000 + i%50)
+	}
+	for _, debug := range []bool{false, true} {
+		cache := t.TempDir()
+		t.Setenv("XDG_CACHE_HOME", cache)
+		debugEnabled = debug
+		d := &daemon{recorder: &fakeRecorder{samples: speech}, cfg: emptyConfig()}
+		captureLog(t, func() { d.stopRecording() })
+		debugEnabled = false
+
+		dir := filepath.Join(cache, "diktat", "debug")
+		_, err := os.Stat(dir)
+		if !debug {
+			if !os.IsNotExist(err) {
+				t.Errorf("without debug mode, %s exists (err %v)", dir, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		info, _ := os.Stat(dir)
+		if perm := info.Mode().Perm(); perm != 0700 {
+			t.Errorf("debug directory mode = %o, want 700", perm)
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, "dictations.jsonl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var entry struct {
+			Audio   string
+			Seconds float64
+		}
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			t.Fatalf("dictations.jsonl = %q: %v", raw, err)
+		}
+		if entry.Seconds != 1 || filepath.Ext(entry.Audio) != ".opus" {
+			t.Errorf("entry = %+v, want one second of audio in an .opus file", entry)
+		}
+		if info, err := os.Stat(filepath.Join(dir, entry.Audio)); err != nil || info.Size() == 0 {
+			t.Errorf("audio %s: %v", entry.Audio, err)
+		}
+	}
+}
+
+// The text skips stretches that said nothing, which the debug log keeps.
+func TestJoinedSkipsSilentStretches(t *testing.T) {
+	said := []spoken{{Text: "one"}, {Text: ""}, {Text: "two"}}
+	if got := joined(said); got != "one two" {
+		t.Errorf("joined = %q, want %q", got, "one two")
 	}
 }

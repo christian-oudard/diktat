@@ -90,6 +90,8 @@
           go test ./...
           runHook postCheck
         '';
+        # Debug mode encodes each dictation through ffmpeg, and a test runs it.
+        nativeCheckInputs = [ pkgs.ffmpeg ];
         nativeBuildInputs = [ pkgs.makeWrapper ];
         postInstall = ''
           for bin in $out/bin/*; do

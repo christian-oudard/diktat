@@ -46,6 +46,14 @@ func StateDir() string {
 // wtype would have nothing to type into without it; falling back would mean
 // quietly writing the private files to the public place in the one case the
 // variable is missing.
+func CacheDir() string {
+	if dir := os.Getenv("XDG_CACHE_HOME"); dir != "" {
+		return filepath.Join(dir, "diktat")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".cache", "diktat")
+}
+
 func RuntimeDir() (string, error) {
 	base := os.Getenv("XDG_RUNTIME_DIR")
 	if base == "" {
