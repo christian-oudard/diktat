@@ -32,6 +32,11 @@ Type the last transcription again.
 List the speech models, or switch to one, downloading it first if the cache
 lacks it. A model may be named or given by its number in the listing.
 .TP
+.B record
+Record the microphone to
+.I recording-<date>.opus
+in the current directory until Esc.
+.TP
 .BR transcribe " [" \fIoptions\fR "] " \fIrecording\fR
 Transcribe a recording into a markdown document with speaker labels. Any format
 .BR ffmpeg (1)
@@ -49,51 +54,36 @@ four.
 Report the release, the source it was built from where that is not the release
 itself, and whether the running daemon is the same build.
 .SH TRANSCRIBE OPTIONS
+The pipeline is the one
+.B tx\-model
+chose.
 .TP
-.BI \-o " path"
+.BI \-o " file" ", " \-\-output " file"
 Write the transcript here. The default is
 .I <recording>_transcript.md
 beside the audio.
 .TP
-.B \-timestamps
-Put the time of each turn in the document. Off by default: a timestamp is worth
-having when the document is an index into the audio and in the way when it is
-something to read.
-.TP
-.BI \-model " pipeline"
-Use this pipeline instead of the one
-.B tx\-model
-chose.
-.TP
-.BI \-diarizer " gguf"
-Attribute speakers with this model instead of the pipeline's. For a diarizer
-that is not in the menu yet.
-.TP
-.BI \-lang " language"
+.BI \-l " code" ", " \-\-language " code"
 The language of the recording.
-.B \-lang list
+.B \-\-language list
 prints what each pipeline takes.
 .TP
-.BI \-s " n" ", " \-speakers " n"
+.BI \-s " people" ", " \-\-speakers " people"
 How many people are in the recording, when that is known. Only the entries
 with a clustering diarizer take it; the rest are built around a fixed number
 of speakers and refuse it rather than ignoring it. Worth giving: the estimate
 cannot tell one person recorded two ways from two people, and on three voices
 it has split one of them in two.
 .TP
-.BI \-pause " duration"
-Shorten any silence longer than this before transcribing, one second by
-default, or
-.B 0
-to leave the audio alone. A model is paid by the second and dead air costs the
-same as speech; the detector that finds the speech costs a fifth of what
-transcribing it does. Only the audio a model is given is shortened \(em every
-timestamp, paragraph break and speaker turn is in the time of the recording
-you made.
-.TP
-.BI \-chunk " duration"
-The longest piece to transcribe at once. The default is what the pipeline can
-hold.
+.B \-\-timestamps
+Put the time of each turn in the document. Off by default: a timestamp is worth
+having when the document is an index into the audio and in the way when it is
+something to read.
+.PP
+Silences longer than a second are shortened before transcribing, since a model
+is paid by the second and dead air costs the same as speech. Only the audio a
+model is given is shortened \(em every timestamp, paragraph break and speaker
+turn is in the time of the recording you made.
 .SH FILES
 .TP
 .I ~/.config/diktat/config.toml

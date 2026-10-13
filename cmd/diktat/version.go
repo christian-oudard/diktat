@@ -35,7 +35,6 @@ func build() string {
 }
 
 func runVersion(args []string) {
-	log.SetFlags(0)
 	// The brackets are for a build whose source is not the release it names.
 	// Every packaging recipe stamps the tag it built, so repeating it there
 	// says nothing, and a tarball build has no revision to say.

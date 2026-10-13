@@ -108,13 +108,13 @@ ever works, the mic gain is the problem, fix it at step 1.
 ## 5. Compare ASR engines
 
 If healthy audio still transcribes badly, the model is the suspect, not the
-capture. `cmd/transcribe -model` runs any model in the menu over the same WAVs, so
+capture. `cmd/transcribe --model` runs any model in the menu over the same WAVs, so
 the comparison is on your voice and your mic rather than on a published
 benchmark:
 
 ```
 $ for m in $(diktat model --names); do
-      echo "== $m"; go run ./cmd/transcribe -model $m recording.wav
+      echo "== $m"; go run ./cmd/transcribe --model $m recording.wav
   done
 ```
 

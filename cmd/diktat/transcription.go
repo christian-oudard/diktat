@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/christian-oudard/diktat/internal/asr"
 	"github.com/christian-oudard/diktat/internal/config"
+	"github.com/christian-oudard/diktat/internal/flagset"
 	"github.com/christian-oudard/diktat/internal/human"
 	"github.com/christian-oudard/diktat/internal/models"
 	"github.com/christian-oudard/diktat/internal/silence"
@@ -29,47 +29,41 @@ import (
 // holding a model far too large to sit beside a desktop and taking minutes
 // rather than the moment a keypress can wait for.
 //
-//	diktat transcribe [-timestamps] [-o out.md] recording.opus
+//	diktat transcribe [--timestamps] [-o out.md] recording.opus
 func runTranscribe(args []string) {
-	log.SetFlags(0)
-	fs := flag.NewFlagSet("transcribe", flag.ExitOnError)
-	out := fs.String("o", "", "write the transcript here (default: alongside the audio)")
-	chunk := fs.Duration("chunk", 0, "longest piece to transcribe at once (default: what the pipeline can hold)")
-	name := fs.String("model", "", "`pipeline` to use (default: the one \"diktat tx-model\" chose)")
-	lang := fs.String("lang", "", "`language` of the recording, \"list\" for the ones it takes, or empty to let the model detect it")
+	fs := flagset.New("transcribe")
+	var out, lang string
+	fs.StringVar(&out, "output", "", "write the transcript to this `file` (default: beside the recording)")
+	fs.StringVar(&out, "o", "", "shorthand for --output")
+	fs.StringVar(&lang, "language", "", "language `code` of the recording, \"list\" for the ones it takes, or empty to let the model detect it")
+	fs.StringVar(&lang, "l", "", "shorthand for --language")
 	stamps := fs.Bool("timestamps", false, "put the time of each turn in the document")
-	diarizer := fs.String("diarizer", "", "`GGUF` to attribute speakers with, instead of the pipeline's")
 	// How many people are in the recording, when that is known. A clustering
 	// diarizer estimates it and the estimate is a real estimate: it cannot
 	// tell one person recorded two ways from two people, and on a recording
 	// of three voices it has split one of them in two. Somebody who was in
 	// the room knows better and this is how they say so.
 	var speakers int
-	fs.IntVar(&speakers, "speakers", 0, "how many people are in the recording, if you know")
-	fs.IntVar(&speakers, "s", 0, "shorthand for -speakers")
-	pause := fs.Duration("pause", defaultPause,
-		"shorten any silence longer than this before transcribing; 0 to leave the audio alone")
+	fs.IntVar(&speakers, "speakers", 0, "how many `people` are in the recording, if you know")
+	fs.IntVar(&speakers, "s", 0, "shorthand for --speakers")
 	fs.Parse(args)
-	if *lang == "list" {
+	if lang == "list" {
 		listLanguages()
 		return
 	}
 	if fs.NArg() != 1 {
-		log.Fatal("usage: diktat transcribe [-timestamps] [-o out.md] [-model <pipeline>] recording")
+		log.Fatal("usage: diktat transcribe [-o file] [-l code] [-s people] [--timestamps] recording")
 	}
 
 	// The turns file that came out of an earlier run, rendered again. This is
 	// what the sidecar is for: an hour of audio costs minutes on a card and a
 	// change of mind about the document costs none of it.
 	if filepath.Ext(fs.Arg(0)) == ".json" {
-		rerender(fs.Arg(0), *out, *stamps)
+		rerender(fs.Arg(0), out, *stamps)
 		return
 	}
 
-	choice := *name
-	if choice == "" {
-		choice = config.TxModel()
-	}
+	choice := config.TxModel()
 	p, ok := models.LookupDiarizer(choice)
 	if !ok {
 		log.Fatalf("unknown pipeline %q", choice)
@@ -80,8 +74,8 @@ func runTranscribe(args []string) {
 	// Before the audio is read rather than after it is transcribed: a hint the
 	// model does not take is either ignored or fatal depending on the family,
 	// and an hour of work either way is too late to say so.
-	if !p.Takes(*lang) {
-		log.Fatalf("%s does not take %s. It takes: %s", p.Name, *lang, p.Codes())
+	if !p.Takes(lang) {
+		log.Fatalf("%s does not take %s. It takes: %s", p.Name, lang, p.Codes())
 	}
 
 	samples, rate, err := wav.Read(fs.Arg(0))
@@ -94,21 +88,14 @@ func runTranscribe(args []string) {
 	clip := time.Duration(len(samples)) * time.Second / transcript.SampleRate
 	log.Printf("%s of audio, %s", clip.Round(time.Second), p.Name)
 
-	path := *out
+	path := out
 	if path == "" {
 		path = strings.TrimSuffix(fs.Arg(0), filepath.Ext(fs.Arg(0))) + "_transcript.md"
 	}
 	base := strings.TrimSuffix(path, filepath.Ext(path))
-	c := resume(base+".partial.json",
-		jobFor(fs.Arg(0), p.Name, *lang, *diarizer, speakers, *pause, *chunk))
+	c := resume(base+".partial.json", jobFor(fs.Arg(0), p.Name, lang, speakers))
 
-	turns := run(p, samples, clip, *chunk, *lang, *diarizer, speakers, *pause, c)
-	// The entry's speaker cap belongs to the diarizer it names, so it says
-	// nothing about a run that was given a different one.
-	cap := p.Speakers
-	if *diarizer != "" {
-		cap = 0
-	}
+	turns := run(p, samples, clip, lang, speakers, c)
 	if len(turns) == 0 {
 		log.Fatal("nothing was transcribed")
 	}
@@ -134,15 +121,15 @@ func runTranscribe(args []string) {
 	// down the line can tell the difference: four labels on a recording of a
 	// dozen people look exactly like four people. Said here because this is the
 	// only place that knows both numbers.
-	if cap > 0 && found >= cap {
+	if p.Speakers > 0 && found >= p.Speakers {
 		log.Printf("%d is the most %s can tell apart, so it is what this recording"+
 			" has at least, not what it has: any voice past that is pooled"+
-			" into one of these labels", cap, p.Name)
+			" into one of these labels", p.Speakers, p.Name)
 	}
 }
 
 // listLanguages says what every entry takes, which the menu's column cannot:
-// it names the reach of a set of 25 rather than its members, and `-lang` is
+// it names the reach of a set of 25 rather than its members, and `--language` is
 // given a member.
 func listLanguages() {
 	for _, p := range models.Diarizers {
@@ -174,30 +161,23 @@ func listLanguages() {
 // a gap, so a pause that was thirty seconds still reads as thirty.
 const defaultPause = time.Second
 
-func run(p models.Pipeline, samples []float32, clip, chunk time.Duration, language, diarizer string,
-	speakers int, pause time.Duration, c *checkpoint) []transcript.Turn {
+func run(p models.Pipeline, samples []float32, clip time.Duration, language string,
+	speakers int, c *checkpoint) []transcript.Turn {
 	// Where the speech is, wanted for two different reasons: the clustering
 	// diarizer embeds only windows inside it, and the silences between are
 	// what gets shortened.
 	speech := speechIn(p, samples, clip)
-	samples, speech, line := shorten(samples, speech, pause)
+	samples, speech, line := shorten(samples, speech, defaultPause)
 	clip = time.Duration(len(samples)) * time.Second / transcript.SampleRate
 
-	// A diarizer named outright replaces whatever the entry carries, and gives
-	// one to an entry that has none. The menu is a set of pairings known to
-	// work; this is for a model that is not in it yet, which is every model the
-	// week it is published.
-	if diarizer == "" && len(p.Models) == 2 {
-		diarizer = p.Models[1].Path()
-	}
-	if diarizer != "" {
+	if len(p.Models) == 2 {
 		if c.Rows == nil {
-			c.Rows = speakerRows(diarizer, samples, clip, speech, speakers, line)
+			c.Rows = speakerRows(p.Models[1].Path(), samples, clip, speech, speakers, line)
 			c.save()
 		}
 		model := load(p.Models[0])
 		defer model.Close()
-		spans := spansOf(model, samples, piece(p, model, clip, chunk), language, line, c)
+		spans := spansOf(model, samples, piece(p, model, clip), language, line, c)
 		return transcript.Attribute(spans, c.Rows)
 	}
 	model := load(p.Models[0])
@@ -213,7 +193,7 @@ func run(p models.Pipeline, samples []float32, clip, chunk time.Duration, langua
 		log.Fatalf("%s decides its own speakers and cannot be told how many;"+
 			" pick an entry with a clustering diarizer, such as %q", p.Name, models.Diarizers[0].Name)
 	}
-	turns := transcribeWhole(p, model, samples, piece(p, model, clip, chunk), language, line)
+	turns := transcribeWhole(p, model, samples, piece(p, model, clip), language, line)
 	say(os.Stdout, turns)
 	return turns
 }
@@ -249,12 +229,8 @@ func shorten(samples []float32, speech []transcribe.Span, pause time.Duration) (
 }
 
 // load opens one of a pipeline's models and says what it cost.
-func load(spec models.Spec) *asr.Model { return loadPath(spec.Path()) }
-
-// loadPath opens a model by path, which is what a diarizer named on the
-// command line is.
-func loadPath(path string) *asr.Model {
-	model, err := asr.Load(path)
+func load(spec models.Spec) *asr.Model {
+	model, err := asr.Load(spec.Path())
 	if err != nil {
 		log.Fatalf("load model: %v", err)
 	}
@@ -263,17 +239,13 @@ func loadPath(path string) *asr.Model {
 }
 
 // piece is how much audio to hand the words model at once: what the menu entry
-// declares, what the model declares, or the whole recording, and -chunk over
-// all of them.
+// declares, what the model declares, or the whole recording.
 //
 // Not asr.AudioLimit. That is the daemon's bound on a single utterance, and a
 // model that has run nothing gets a 30 second floor by design, which here cuts
 // an hour into two hundred pieces.
-func piece(p models.Pipeline, model *asr.Model, clip, chunk time.Duration) time.Duration {
+func piece(p models.Pipeline, model *asr.Model, clip time.Duration) time.Duration {
 	limit := p.Piece
-	if chunk != 0 {
-		limit = chunk
-	}
 	if limit == 0 {
 		limit = clip
 	}
@@ -306,7 +278,7 @@ func speechIn(p models.Pipeline, samples []float32, clip time.Duration) []transc
 	if p.Speech.Name == "" {
 		return nil
 	}
-	model := loadPath(p.Speech.Path())
+	model := load(p.Speech)
 	defer model.Close()
 
 	t0 := time.Now()

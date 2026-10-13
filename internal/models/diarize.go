@@ -230,7 +230,7 @@ func (p Pipeline) Size() string {
 // Languages renders the reach of the entry, the same way the model menu does.
 func (p Pipeline) Languages() string { return Spec{Langs: p.Langs}.Languages() }
 
-// Codes lists the language codes the entry takes, which is what the `-lang`
+// Codes lists the language codes the entry takes, which is what the `--language`
 // setting is given. The menu column names the reach of a set because a column
 // cannot hold 25 codes; that answers "roughly where" and not "is mine in
 // there", and the second question is the one somebody about to spend an hour

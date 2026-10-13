@@ -63,7 +63,7 @@ never implicitly.
   the library for whatever is present.
 - `internal/phrase` - where a dictation still being recorded can be cut: the
   voice activity detector, fetched with every model, and the rule for which
-  pause ends a phrase. `cmd/transcribe -live` replays a recording through it
+  pause ends a phrase. `cmd/transcribe --live` replays a recording through it
   and reports the wait after the last word.
 - `internal/asr` - one `Model` over transcribe.cpp: load, transcribe, and what
   it costs. Picks the discrete GPU when there is one.
@@ -321,10 +321,10 @@ is a second menu over `internal/models.Diarizers`, `diktat transcribe` runs an
 entry over a file, and `cmd/diarize` runs a diarizer alone. Input is whatever
 the recorder wrote: anything that is not already a 16 kHz WAV goes through
 ffmpeg. The document is what was said and nothing else, with the run's own
-figures logged rather than printed into it; `-timestamps` adds the time of each
+figures logged rather than printed into it; `--timestamps` adds the time of each
 turn, for a transcript that is an index into the audio. Paragraphs are not
 invented: a break is a two second pause after a finished sentence, which the
-speaker put there and the word stamps report. `-lang list` names the codes each
+speaker put there and the word stamps report. `--language list` names the codes each
 entry takes, since the menu column names the reach of a set of 25 and the
 setting is given a member of it.
 
@@ -345,8 +345,8 @@ is worth doing: the estimate cannot tell one person recorded two ways from two
 people, and on three voices it has split one of them in two.
 
 Long silences are shortened before a model is paid by the second to listen to
-them: `internal/silence` cuts the middle out of any gap over `-pause`, one
-second by default, and hands back a timeline that puts every stamp into the
+them: `internal/silence` cuts the middle out of any gap over a
+second, and hands back a timeline that puts every stamp into the
 recording's own time at the three seams where a model's answer enters the
 program. Nothing downstream knows it happened, which is what keeps the
 paragraph rule reading the pause somebody actually left.

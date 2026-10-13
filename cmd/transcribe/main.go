@@ -8,12 +8,11 @@
 // devShell. It lives in Go rather than in a script because it has to run the
 // real pipeline, and a script would have to reimplement it.
 //
-//	go run ./cmd/transcribe [-model <name>] [-live] recording...
+//	go run ./cmd/transcribe [--model <name>] [--live] recording...
 package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -24,6 +23,7 @@ import (
 
 	"github.com/christian-oudard/diktat/internal/asr"
 	"github.com/christian-oudard/diktat/internal/audio"
+	"github.com/christian-oudard/diktat/internal/flagset"
 	"github.com/christian-oudard/diktat/internal/human"
 	"github.com/christian-oudard/diktat/internal/models"
 	"github.com/christian-oudard/diktat/internal/phrase"
@@ -49,7 +49,7 @@ func transcribeWith(m *asr.Model, samples []float32, pnc bool) (string, error) {
 }
 
 func main() {
-	fs := flag.NewFlagSet("transcribe", flag.ExitOnError)
+	fs := flagset.New("transcribe")
 	pnc := fs.Bool("pnc", false, "ask for punctuation and casing rather than taking the family default")
 	limitFlag := fs.Duration("limit", 0, "cut audio at this length instead of what the model can take")
 	name := fs.String("model", models.Default, "model to transcribe with")

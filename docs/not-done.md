@@ -34,7 +34,7 @@ a second statement of the same thing is what drifts.
   against. Open: whether to cut the menu, change the default to the entry that
   counts speakers, or only rewrite the notes.
 
-- **`-pause` defaults to one second on judgement, not evidence.** The value is
+- **Silence is shortened past one second on judgement, not evidence.** The value is
   inside the range of an ordinary pause between utterances, which is the
   property that matters, but no measurement chose it over any other value in
   that range, and none chose it over leaving the audio alone.

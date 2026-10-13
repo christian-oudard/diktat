@@ -18,7 +18,6 @@ import (
 // runModel: bare lists the menu and offers to switch, anything else switches
 // to that model, fetching it first if it is not in the cache yet.
 func runModel(args []string) {
-	log.SetFlags(0)
 	if len(args) > 0 {
 		switchModel(args[0])
 		return

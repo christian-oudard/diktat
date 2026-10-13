@@ -14,7 +14,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log"
 	"math"
@@ -27,13 +26,14 @@ import (
 
 	"github.com/christian-oudard/diktat/internal/asr"
 	"github.com/christian-oudard/diktat/internal/audio"
+	"github.com/christian-oudard/diktat/internal/flagset"
 	"github.com/christian-oudard/diktat/internal/human"
 	"github.com/christian-oudard/diktat/internal/models"
 	"github.com/christian-oudard/diktat/internal/wav"
 )
 
 func main() {
-	fs := flag.NewFlagSet("warmbench", flag.ExitOnError)
+	fs := flagset.New("warmbench")
 	name := fs.String("model", "parakeet-tdt_ctc-110m", "model to load")
 	warm := fs.String("warm", "sawtooth:4", "warm runs as kind:seconds, comma separated; none for no warmup")
 	probe := fs.String("probe", "2,5,10,20", "probe lengths in seconds")
@@ -171,7 +171,7 @@ func material(kind string, secs float64, speech []float32) []float32 {
 		}
 	case "speech":
 		if speech == nil {
-			log.Fatal("speech needs -clip")
+			log.Fatal("speech needs --clip")
 		}
 		for i := range buf {
 			buf[i] = speech[i%len(speech)]

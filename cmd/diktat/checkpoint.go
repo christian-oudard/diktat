@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"time"
 
 	"github.com/christian-oudard/diktat/internal/transcript"
 )
@@ -24,14 +23,11 @@ type job struct {
 	Modified int64
 	Pipeline string
 	Language string
-	Diarizer string
 	Speakers int
-	Pause    time.Duration
-	Chunk    time.Duration
 }
 
 // jobFor is the job a run over this recording with these options would be.
-func jobFor(audio, pipeline, language, diarizer string, speakers int, pause, chunk time.Duration) job {
+func jobFor(audio, pipeline, language string, speakers int) job {
 	abs, err := filepath.Abs(audio)
 	if err != nil {
 		log.Fatal(err)
@@ -41,8 +37,7 @@ func jobFor(audio, pipeline, language, diarizer string, speakers int, pause, chu
 		log.Fatal(err)
 	}
 	return job{Audio: abs, Size: info.Size(), Modified: info.ModTime().UnixNano(),
-		Pipeline: pipeline, Language: language, Diarizer: diarizer,
-		Speakers: speakers, Pause: pause, Chunk: chunk}
+		Pipeline: pipeline, Language: language, Speakers: speakers}
 }
 
 // checkpoint is a run's finished work, saved as it is done, so a run that is

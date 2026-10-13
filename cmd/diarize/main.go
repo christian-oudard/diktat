@@ -11,13 +11,12 @@
 // not: nothing here is part of dictating. The flake builds only cmd/diktat, so
 // this is `go run ./cmd/diarize` inside the devShell.
 //
-//	go run ./cmd/diarize [-model <name>] [-preset <point>] [-o segments.tsv] file.wav
+//	go run ./cmd/diarize [--model <name>] [--preset <point>] [-o segments.tsv] file.wav
 package main
 
 import (
 	"bufio"
 	"context"
-	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -27,6 +26,7 @@ import (
 	transcribe "github.com/handy-computer/transcribe.cpp/bindings/go"
 
 	"github.com/christian-oudard/diktat/internal/asr"
+	"github.com/christian-oudard/diktat/internal/flagset"
 	"github.com/christian-oudard/diktat/internal/human"
 	"github.com/christian-oudard/diktat/internal/models"
 	"github.com/christian-oudard/diktat/internal/wav"
@@ -43,13 +43,13 @@ var presets = map[string]transcribe.SortformerPreset{
 }
 
 func main() {
-	fs := flag.NewFlagSet("diarize", flag.ExitOnError)
+	fs := flagset.New("diarize")
 	name := fs.String("model", "diar_streaming_sortformer_4spk-v2.1-F16.gguf", "diarizer to run")
 	preset := fs.String("preset", "very-high", "operating point: default, very-high, high, low")
 	out := fs.String("o", "", "write speaker rows to this TSV")
 	fs.Parse(os.Args[1:])
 	if fs.NArg() != 1 {
-		log.Fatal("usage: diarize [-model <name>] [-preset <point>] [-o segments.tsv] file.wav")
+		log.Fatal("usage: diarize [--model <name>] [--preset <point>] [-o segments.tsv] file.wav")
 	}
 
 	point, ok := presets[*preset]

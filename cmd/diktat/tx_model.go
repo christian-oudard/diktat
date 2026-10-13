@@ -22,7 +22,6 @@ import (
 // dictation menu diarizes at all, and the models here are useless for
 // dictation: the smallest is 800 MiB and the cheapest of them produces no text.
 func runTxModel(args []string) {
-	log.SetFlags(0)
 	if len(args) > 0 {
 		chooseTxModel(args[0])
 		return

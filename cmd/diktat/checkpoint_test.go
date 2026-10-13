@@ -11,7 +11,7 @@ import (
 
 func someJob() job {
 	return job{Audio: "/tmp/meeting.opus", Size: 1234, Modified: 5678,
-		Pipeline: "parakeet-tdt-0.6b-v2 + sortformer", Pause: time.Second}
+		Pipeline: "parakeet-tdt-0.6b-v2 + sortformer"}
 }
 
 func TestResumeReturnsSavedWork(t *testing.T) {

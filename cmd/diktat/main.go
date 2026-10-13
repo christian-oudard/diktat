@@ -3,6 +3,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 )
 
@@ -31,6 +32,9 @@ var commands = []command{
 }
 
 func main() {
+	// A command's messages are for the person who ran it, in a terminal that
+	// has its own clock. The daemon decides for itself.
+	log.SetFlags(0)
 	if len(os.Args) < 2 {
 		usage(os.Stdout)
 		return
