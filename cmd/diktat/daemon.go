@@ -155,14 +155,12 @@ func runDaemon(args []string) {
 		// it is.
 		failed: model == nil,
 	}
-	defer d.closeModel()
 	defer os.Remove(activityPath)
 	if det, err := phrase.LoadDetector(); err != nil {
 		log.Printf("No voice activity detector (%v), so each dictation is transcribed whole when it stops. "+
 			"`diktat model` fetches it.", err)
 	} else {
 		d.detector = det
-		defer det.Close()
 	}
 	if model == nil {
 		d.restoreStatus()
@@ -202,13 +200,7 @@ func runDaemon(args []string) {
 			case syscall.SIGHUP:
 				d.requestModel()
 			case syscall.SIGTERM, syscall.SIGINT:
-				d.mu.Lock()
-				d.recording = false
-				d.mu.Unlock()
-				// Closing the models waits for whatever is running on one,
-				// and a rehearsal length can be half a minute of audio.
-				d.pauseWarming()
-				log.Println("Daemon stopped.")
+				d.shutdown()
 				return
 			}
 		case res := <-d.loaded:
@@ -855,8 +847,28 @@ func (d *daemon) pauseWarming() {
 	}
 }
 
+// shutdown finishes a dictation under way as the key would have, so stopping
+// the daemon does not throw away what was being said, and then lets go of the
+// model.
+func (d *daemon) shutdown() {
+	if d.isRecording() {
+		d.stopRecording()
+	}
+	// Closing the models waits for whatever is running on one, and a
+	// rehearsal length can be half a minute of audio.
+	d.pauseWarming()
+	d.closeModel()
+	log.Println("Daemon stopped.")
+}
+
+// closeModel waits out the run holding the model before closing it. The
+// detector is closed here too, since a phrase run holds it as well: closed
+// under a run, its call never returned and the daemon could not exit.
 func (d *daemon) closeModel() {
 	d.settle()
+	if d.detector != nil {
+		d.detector.Close()
+	}
 	if d.model != nil {
 		d.model.Close()
 	}

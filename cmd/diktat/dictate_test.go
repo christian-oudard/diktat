@@ -400,3 +400,22 @@ func TestJoinedSkipsSilentStretches(t *testing.T) {
 		t.Errorf("joined = %q, want %q", got, "one two")
 	}
 }
+
+// Stopping the daemon mid-dictation finishes the dictation as the key would
+// have, so a restart does not throw away what was being said.
+func TestShutdownFinishesTheDictation(t *testing.T) {
+	speech := make([]int16, 16000)
+	for i := range speech {
+		speech[i] = int16(1000 + i%50)
+	}
+	d := &daemon{recorder: &fakeRecorder{samples: speech}, cfg: emptyConfig()}
+	d.startRecording()
+	logged := captureLog(t, func() { d.shutdown() })
+	if d.isRecording() {
+		t.Error("still recording after shutdown")
+	}
+	// With no model, finishing the dictation is what says so.
+	if !strings.Contains(logged, "No model") {
+		t.Errorf("log was %q; want the dictation to have been transcribed", logged)
+	}
+}

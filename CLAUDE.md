@@ -40,7 +40,8 @@ never implicitly.
   wtype. While recording it transcribes each phrase that ends in a pause, so
   only the last is left when the key is pressed again; see `docs/phrases.md`. Runs for the session: it never starts recording by itself and never
   exits by itself. Signal handlers are installed before the model load, so a
-  toggle during startup is queued rather than killing the process. Recording is
+  toggle during startup is queued rather than killing the process. Stopped
+  mid-dictation, it finishes the dictation as the key would have, then exits. Recording is
   unbounded, since how long an utterance may usefully be is the model's answer
   and the daemon asks it.
 - `cmd/diktat/model.go` - lists the menu, or switches to an entry by number,
