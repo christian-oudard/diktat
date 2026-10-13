@@ -8,4 +8,4 @@ require (
 	github.com/handy-computer/transcribe.cpp/bindings/go v0.0.0
 )
 
-replace github.com/handy-computer/transcribe.cpp/bindings/go => ../transcribe-cpp/bindings/go
+replace github.com/handy-computer/transcribe.cpp/bindings/go => ../transcribe.cpp/bindings/go
