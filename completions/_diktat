@@ -82,6 +82,9 @@ _diktat() {
                 _diktat_tx_models
             fi
             ;;
+        record)
+            _arguments '(-t --text)'{-t,--text}'[print the text while recording]'
+            ;;
         transcribe)
             # Any file ffmpeg reads, or a turns file from an earlier run, so
             # the recording is not filtered by extension.

@@ -4,8 +4,9 @@ Diktat records to the end of an utterance, transcribes it whole, and types the
 result. Streaming models transcribe as you speak. This is what adopting one
 would mean, and what it would cost.
 
-Nothing here is built. It is written down so the decision is made once, in the
-open, rather than discovered halfway through an implementation.
+None of this is built for dictation. It is written down so the decision is
+made once, in the open, rather than discovered halfway through an
+implementation. `diktat record --text` does stream; see `record.md`.
 
 
 ## What actually changes

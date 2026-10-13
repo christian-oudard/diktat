@@ -15,7 +15,9 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/christian-oudard/diktat/internal/asr"
 	"github.com/christian-oudard/diktat/internal/audio"
+	"github.com/christian-oudard/diktat/internal/flagset"
 )
 
 // runRecord captures from the microphone until Esc or Ctrl-C and writes the
@@ -27,8 +29,19 @@ import (
 // memory stays flat however long the meeting runs. Closing the terminal ends
 // the recording the way Esc does; a harder kill loses only the last moments.
 func runRecord(args []string) {
-	if len(args) > 0 {
-		log.Fatal("usage: diktat record")
+	fs := flagset.New("record")
+	var showText bool
+	fs.BoolVar(&showText, "text", false, "print the text while recording")
+	fs.BoolVar(&showText, "t", false, "shorthand for --text")
+	fs.Parse(args)
+	if fs.NArg() > 0 {
+		log.Fatal("usage: diktat record [--text]")
+	}
+	// Before anything starts, so a missing model costs no recording.
+	if showText {
+		if err := checkTextModel(); err != nil {
+			log.Fatal(err)
+		}
 	}
 	out := time.Now().Format("recording-2006-01-02T15-04-05.opus")
 
@@ -52,11 +65,58 @@ func runRecord(args []string) {
 		log.Fatalf("terminal: %v", err)
 	}
 
+	// The model loads beside the recording rather than before it, since a
+	// recording is started when somebody starts talking. What is heard
+	// meanwhile waits in rt and is fed first.
+	var loaded chan *asr.Model
+	var failed chan error
+	if showText {
+		loaded, failed = make(chan *asr.Model, 1), make(chan error, 1)
+		go func() {
+			m, err := loadTextModel()
+			if err != nil {
+				failed <- err
+				return
+			}
+			loaded <- m
+		}()
+	}
+	// textErr is why the text stopped, said once the recording is safe.
+	var textErr error
+	var rt recordText
+	// On a terminal the meter and the text share the screen through a board,
+	// which puts each word under its own blocks. Otherwise the text goes
+	// where it was sent and the meter is never broken.
+	var meter io.Writer = os.Stderr
+	pr := &printer{w: os.Stdout}
+	show := pr.show
+	end := func(words []stamped) {
+		pr.close(words)
+		fmt.Fprintln(os.Stderr)
+	}
+	var bd *board
+	if showText && columns(os.Stderr.Fd()) > 0 && columns(os.Stdout.Fd()) > 0 {
+		bd = &board{meter: os.Stderr, text: os.Stdout,
+			width: func() int { return columns(os.Stderr.Fd()) }}
+		meter, show = bd, bd.show
+		end = func(words []stamped) {
+			if words != nil {
+				bd.show(words)
+			}
+			bd.close()
+		}
+	}
+
 	rec.Start()
 	fmt.Fprintf(os.Stderr, "Recording to %s. Press Esc to stop.\n", out)
-	tr := newTrace(os.Stderr)
+	tr := newTrace(meter)
+	if bd != nil {
+		bd.glyph = tr.glyph
+	}
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
+	listen := time.NewTicker(listenEvery)
+	defer listen.Stop()
 	var n int
 	write := func(samples []int16) {
 		if err := binary.Write(enc.in, binary.LittleEndian, samples); err != nil {
@@ -65,6 +125,10 @@ func runRecord(args []string) {
 		}
 		n += len(samples)
 		tr.add(samples)
+		rt.add(samples)
+		if bd != nil {
+			bd.add(samples)
+		}
 	}
 loop:
 	for {
@@ -73,19 +137,50 @@ loop:
 			break loop
 		case <-keys:
 			break loop
+		case m := <-loaded:
+			defer m.Close()
+			rt.ready(feedText(m), finalizeText(m))
+		case err := <-failed:
+			textErr = err
 		case <-ticker.C:
 			write(rec.Drain())
+		case <-listen.C:
+			words, changed, err := rt.poll()
+			if err != nil {
+				textErr = err
+			} else if changed {
+				show(words)
+			}
 		}
 	}
 	write(rec.Stop())
 	restore()
-	fmt.Fprintln(os.Stderr)
+	// Stopped before the models loaded: what was said is still to be
+	// transcribed, so wait for them.
+	if loaded != nil && rt.feed == nil && textErr == nil {
+		select {
+		case m := <-loaded:
+			defer m.Close()
+			rt.ready(feedText(m), finalizeText(m))
+		case err := <-failed:
+			textErr = err
+		case <-sig:
+		}
+	}
+	words, err := rt.finish()
+	if err != nil {
+		textErr = err
+	}
+	end(words)
 
 	if err := enc.finish(); err != nil {
 		log.Fatalf("write %s: %v", out, err)
 	}
 	fmt.Fprintf(os.Stderr, "Saved %s (%s)\n", out,
 		(time.Duration(n) * time.Second / audio.SampleRate).Round(time.Second))
+	if textErr != nil {
+		log.Fatalf("The text stopped partway: %v", textErr)
+	}
 }
 
 // readStopKeys sets the terminal on stdin to deliver keys as they are pressed,

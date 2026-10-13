@@ -31,3 +31,40 @@ count towards the floor.
 
 A block in which any sample reached full scale, so the audio clipped, draws as
 `╋`.
+
+## Text while recording
+
+With `--text` or `-t`, it transcribes while it records, with the dictation
+model, the one `diktat model` chose, which has to be one that streams. On the
+menu that is parakeet-unified-en-0.6b. Words appear about a second after
+they are said, once the model has settled on them, and do not change after
+that. After Esc, the rest is transcribed and printed before the file is
+reported saved.
+
+On a terminal, the text is drawn as rows of words with a level over every
+column, taken from the audio that column stands for. A word's letters stand
+for the word's own audio, stretched or squeezed to their width; the
+punctuation and space between two words stand for the time between them, so
+a pause draws blank where the text pauses, and words that run together draw
+no gap. The model's word times can be out by a few hundred milliseconds, so
+each word is first fitted to the sound around it: it takes in all of its sound
+and none of the silence beside it. The levels are on the meter's scale, so
+steady background noise draws blank and anything louder draws.
+
+The row being written is at the bottom, with the meter blocks for the audio
+after its last word below it, one per 100 ms, as the meter draws them. Each
+new word is added to that row and replaces its blocks. When the next word
+does not fit, the row is finished, and stays where it is as the next row
+starts below it.
+
+Not on a terminal, the words are printed as they are finished, one sentence
+per line. The meter goes to stderr and the text to stdout, so `diktat record
+--text > notes.txt` keeps the text and shows the meter unbroken.
+
+Recording starts at once; text starts once the model has loaded. Esc before
+then waits for it, so a short recording still gets its text; Ctrl-C while it
+waits skips the text. With a dictation model that does not stream, or none
+downloaded, `--text` refuses to start and says what to choose or fetch. If
+transcribing fails, the text stops there and the recording carries on; the
+error is printed after the file is saved. Speaker labels come afterwards:
+`diktat transcribe` gives them from the saved file.

@@ -32,10 +32,13 @@ Type the last transcription again.
 List the speech models, or switch to one, downloading it first if the cache
 lacks it. A model may be named or given by its number in the listing.
 .TP
-.B record
+.BR record " [" \-t | \-\-text ]
 Record the microphone to
 .I recording-<date>.opus
-in the current directory until Esc.
+in the current directory until Esc. With
+.BR \-t " or " \-\-text ,
+also print the text to standard output as it is spoken, using the dictation
+model, which has to be one that streams, such as parakeet-unified-en-0.6b.
 .TP
 .BR transcribe " [" \fIoptions\fR "] " \fIrecording\fR
 Transcribe a recording into a markdown document with speaker labels. Any format

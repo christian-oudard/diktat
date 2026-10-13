@@ -471,6 +471,32 @@ func (m *Model) Streams() (bool, error) {
 	return c.SupportsStreaming, nil
 }
 
+// StreamBegin starts transcribing audio as it arrives, with a time on every
+// token. ctx has to stay live until StreamFinalize.
+func (m *Model) StreamBegin(ctx context.Context) error {
+	return m.s.StreamBegin(ctx, &transcribe.RunOptions{Timestamps: transcribe.StampsToken}, nil)
+}
+
+// StreamFeed hands the stream more audio and says whether more text was
+// committed; Committed is all of it so far.
+func (m *Model) StreamFeed(audio []float32) (bool, error) {
+	u, err := m.s.StreamFeed(audio)
+	return u.CommittedChanged, err
+}
+
+// StreamFinalize ends the stream, committing whatever is left.
+func (m *Model) StreamFinalize() error {
+	_, err := m.s.StreamFinalize()
+	return err
+}
+
+// Committed is the stream's tokens that will not change, in order.
+func (m *Model) Committed() []transcribe.Token {
+	_, _, n := m.s.StreamCommitted()
+	tokens := m.s.StreamSnapshot().Tokens
+	return tokens[:min(n, len(tokens))]
+}
+
 // MaxTimestamps is the finest alignment the model can produce. It decides
 // whether a transcript can carry speaker labels: attribution is a join between
 // words and speaker rows, so a model that stamps only whole segments cannot be

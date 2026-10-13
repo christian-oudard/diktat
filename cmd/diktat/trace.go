@@ -112,6 +112,32 @@ func (t *trace) typical() float64 {
 	return s[len(s)*3/4]
 }
 
+// glyph is how a stretch of audio draws on the meter's present scale, without
+// moving it: a block as it arrives, or the span of a word drawn over it.
+func (t *trace) glyph(f []int16) rune {
+	if len(f) == 0 {
+		return heights[0]
+	}
+	if hasClipped(f) {
+		return clipped
+	}
+	level := blockLevel(f)
+	if level < t.noiseFloor()+aboveNoise {
+		return heights[0]
+	}
+	score := effort(f, level)
+	if len(t.speech) == 0 {
+		return heights[height(score, score)]
+	}
+	return heights[height(score, t.typical())]
+}
+
+func hasClipped(f []int16) bool {
+	return slices.ContainsFunc(f, func(s int16) bool {
+		return s == math.MaxInt16 || s == math.MinInt16
+	})
+}
+
 func (t *trace) add(samples []int16) {
 	t.pending = append(t.pending, samples...)
 	var b strings.Builder
@@ -125,22 +151,13 @@ func (t *trace) add(samples []int16) {
 				t.recent = t.recent[1:]
 			}
 		}
-		if slices.ContainsFunc(f, func(s int16) bool {
-			return s == math.MaxInt16 || s == math.MinInt16
-		}) {
-			b.WriteRune(clipped)
-			continue
+		if !hasClipped(f) && level >= t.noiseFloor()+aboveNoise {
+			t.speech = append(t.speech, effort(f, level))
+			if len(t.speech) > speechWindow {
+				t.speech = t.speech[1:]
+			}
 		}
-		if level < t.noiseFloor()+aboveNoise {
-			b.WriteRune(heights[0])
-			continue
-		}
-		score := effort(f, level)
-		t.speech = append(t.speech, score)
-		if len(t.speech) > speechWindow {
-			t.speech = t.speech[1:]
-		}
-		b.WriteRune(heights[height(score, t.typical())])
+		b.WriteRune(t.glyph(f))
 	}
 	t.pending = append(t.pending[:0], t.pending[i:]...)
 	io.WriteString(t.out, b.String())

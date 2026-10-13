@@ -80,6 +80,7 @@ First, select and download a transcription pipeline:
 `$ diktat tx-model`
 
 To record one, run `$ diktat record` and press Esc when done. It saves a compressed `recording-<date>.opus` in the current directory.
+Add `-t` to see the text as it is spoken: `$ diktat record -t`. That needs a dictation model that streams, which you choose with `$ diktat model parakeet-unified-en-0.6b`.
 
 Then, create a transcript with `$ diktat transcribe <filename>`. This outputs a markdown file, `<filename>_transcript.md`.
 
