@@ -47,9 +47,9 @@ func ActivityPath() (string, error) { return sessionFile("activity") }
 // It holds what was actually said, which is the reason this directory is mode
 // 0700 rather than somewhere every process on the machine can read.
 //
-// The capture itself is not kept. Writing a recording of someone's voice on
-// every dictation earns its keep only if the recording gets replayed, and
-// nothing here replays it: cmd/transcribe takes files someone chose to make.
+// The capture itself is not kept here. Writing a recording of someone's voice
+// on every dictation earns its keep only if the recording gets replayed, so
+// only debug mode keeps them, for `dev replay` (docs/debug.md).
 func LastText() (string, error) { return sessionFile("last") }
 
 // StatusPath holds a Pango markup string saying what the daemon is doing.

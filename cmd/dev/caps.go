@@ -1,17 +1,3 @@
-// caps says what a model can do, read out of the GGUF rather than out of a
-// table someone kept by hand. The menu's own listing has to answer before a
-// model is downloaded, so it carries only what a person can write down; this
-// carries what the library knows once the file is on disk.
-//
-// It exists because timestamps became a requirement. Attributing text to
-// speakers means lining words up against speaker rows, so a model that stamps
-// only whole segments cannot be joined to a diarizer however good its
-// transcripts are, and that is not something the download size says.
-//
-//	go run ./cmd/caps [model...]
-//
-// With no arguments it reads every model already in the cache, on the CPU,
-// since none of this needs the card.
 package main
 
 import (
@@ -30,7 +16,21 @@ import (
 	"github.com/christian-oudard/diktat/internal/models"
 )
 
-func main() {
+// runCaps says what a model can do, read out of the GGUF rather than out of a
+// table someone kept by hand. The menu's own listing has to answer before a
+// model is downloaded, so it carries only what a person can write down; this
+// carries what the library knows once the file is on disk.
+//
+// It exists because timestamps became a requirement. Attributing text to
+// speakers means lining words up against speaker rows, so a model that stamps
+// only whole segments cannot be joined to a diarizer however good its
+// transcripts are, and that is not something the download size says.
+//
+//	go run ./cmd/dev caps [model...]
+//
+// With no arguments it reads every model already in the cache, on the CPU,
+// since none of this needs the card.
+func runCaps(args []string) {
 	// Capabilities come out of the file, so there is nothing here worth
 	// putting on the card, and a menu's worth of loads would evict whatever
 	// the daemon is holding.
@@ -38,7 +38,7 @@ func main() {
 
 	devices()
 
-	paths := os.Args[1:]
+	paths := args
 	if len(paths) == 0 {
 		paths = cached()
 	}
@@ -112,7 +112,7 @@ func describe(path string) {
 
 	langs, _ := model.Languages()
 	fmt.Printf("%-42s  %-8s  %-9s  %s\n", name,
-		stamps(model), audio(model.MaxAudio()), features(model, len(langs)))
+		stamps(model), audioLimit(model.MaxAudio()), features(model, len(langs)))
 }
 
 // stamps is the finest alignment the model can produce, which is the one
@@ -129,7 +129,7 @@ func stamps(m *asr.Model) string {
 // audio is the model's own declared ceiling on one run. Zero means the family
 // windows long audio internally, which is not the same as no limit: the card
 // still has to hold the graph (see Audio length in CLAUDE.md).
-func audio(d time.Duration) string {
+func audioLimit(d time.Duration) string {
 	if d == 0 {
 		return "chunks"
 	}

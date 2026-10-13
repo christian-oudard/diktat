@@ -49,13 +49,13 @@ never implicitly.
   name or path via SIGHUP, fetching it first if the cache lacks it. There is no
   separate download verb: naming a model is the only reason to want one, and
   the prompt keeps the fetch from being silent.
-- `cmd/transcribe/` - runs the daemon's pipeline over WAV files, to compare
-  models on fixed audio. Warms first, like the daemon, since an unwarmed model
-  cuts long audio differently and that changes the transcript. `--stream`
-  replays a file through a streaming model a quarter second at a time and
-  reports the wait after the audio ends and how far committed text trails it.
-- `cmd/warmbench/` - measures what each rehearsal length compiles, which is how
-  the bucket set is chosen rather than guessed.
+- `cmd/dev/` - the developer tools, run with `go run ./cmd/dev` and never
+  installed; `docs/dev.md`. `replay` puts recordings through the dictation
+  path as if just dictated, by default the ones debug mode kept, and reports
+  the wait after the audio ends; it warms first, like the daemon, since an
+  unwarmed model cuts long audio differently and that changes the transcript.
+  `caps` reads what a model can do out of its GGUF, and `diarize` runs a
+  diarizer alone.
 - `internal/models` - the menu: thirteen entries, none bundled, all fetched
   from the `handy-computer` GGUF repos into `~/.cache/diktat/models`, so no
   model is a special case. An entry is there because nothing else on the menu
@@ -67,8 +67,8 @@ never implicitly.
   the library for whatever is present.
 - `internal/phrase` - where a dictation still being recorded can be cut: the
   voice activity detector, fetched with every model, and the rule for which
-  pause ends a phrase. `cmd/transcribe --live` replays a recording through it
-  and reports the wait after the last word.
+  pause ends a phrase. `dev replay --mode phrases` replays a recording through
+  it.
 - `internal/asr` - one `Model` over transcribe.cpp: load, transcribe, and what
   it costs. Picks a discrete GPU, else an integrated one, else the CPU.
 - `internal/audio` - capture through malgo, plus the length buckets and the
@@ -326,7 +326,7 @@ too, `Rebuild` included.
 Dictation never asks who is speaking: one person holds the microphone. A
 recording of a talk or an interview is the other shape, so `diktat tx-model`
 is a second menu over `internal/models.Diarizers`, `diktat transcribe` runs an
-entry over a file, and `cmd/diarize` runs a diarizer alone. Input is whatever
+entry over a file, and `dev diarize` runs a diarizer alone. Input is whatever
 the recorder wrote: anything that is not already a 16 kHz WAV goes through
 ffmpeg. The document is what was said and nothing else, with the run's own
 figures logged rather than printed into it; `--timestamps` adds the time of each
@@ -339,7 +339,7 @@ setting is given a member of it.
 It shares no entries with the first menu, on a capability rather than a
 preference. Attributing text to a speaker is a join between words and speaker
 rows, so a model that cannot stamp below a whole segment cannot carry a label
-at all. `cmd/caps` reads that out of a GGUF: of the dictation menu only the
+at all. `dev caps` reads that out of a GGUF: of the dictation menu only the
 parakeets stamp per token, whisper stops at segments, and the rest produce no
 timestamps.
 

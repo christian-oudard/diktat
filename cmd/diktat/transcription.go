@@ -369,7 +369,7 @@ func speakerRows(path string, samples []float32, clip time.Duration, speech []tr
 //
 // Word spans where the model stamps words, whole segments where it does not.
 // The difference is how precisely a change of speaker can be placed, and it is
-// the reason `cmd/caps` exists: of the models here only the parakeets stamp per
+// the reason `dev caps` exists: of the models here only the parakeets stamp per
 // token.
 func spansOf(model *asr.Model, samples []float32, limit time.Duration, language string,
 	line silence.Timeline, c *checkpoint) []transcript.Span {

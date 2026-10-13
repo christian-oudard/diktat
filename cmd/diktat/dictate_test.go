@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/christian-oudard/diktat/internal/config"
+	"github.com/christian-oudard/diktat/internal/debuglog"
 )
 
 // captureLog runs f with the log redirected, and returns what it wrote.
@@ -395,7 +396,7 @@ func TestDebugKeepsTheDictation(t *testing.T) {
 
 // The text skips stretches that said nothing, which the debug log keeps.
 func TestJoinedSkipsSilentStretches(t *testing.T) {
-	said := []spoken{{Text: "one"}, {Text: ""}, {Text: "two"}}
+	said := []debuglog.Stretch{{Text: "one"}, {Text: ""}, {Text: "two"}}
 	if got := joined(said); got != "one two" {
 		t.Errorf("joined = %q, want %q", got, "one two")
 	}

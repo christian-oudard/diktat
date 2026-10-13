@@ -16,8 +16,8 @@ over before that is fed whole when the key is pressed. A model switched during
 the recording, or a stream that fails, leaves the dictation to be transcribed
 whole, as a model that does not stream would.
 
-`go run ./cmd/transcribe --stream` replays a recording through a streaming
-model the same way and reports the wait after the audio ends. `diktat record
+`go run ./cmd/dev replay` replays a recording through a streaming model the
+same way and reports the wait after the audio ends. `diktat record
 --text` streams too, and prints the words as the model commits them; see
 `record.md`.
 

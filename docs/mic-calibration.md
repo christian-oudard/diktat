@@ -90,16 +90,16 @@ Captured `.wav` files are gitignored so voice recordings are never committed.
 
 ## 4. Run the offline pipeline
 
-`cmd/transcribe` runs the daemon's own pipeline over WAV files, so a change
-to the pipeline can be measured against the same audio every time. It is not
+`dev replay` runs the daemon's own pipeline over recordings, so a change to
+the pipeline can be measured against the same audio every time. It is not
 installed, so run it from a checkout:
 
 ```
-$ nix build
-$ go run ./cmd/transcribe recording.wav
+$ go run ./cmd/dev replay recording.wav
 ```
 
-Each line prints duration, peak, RMS, time taken, and the decoded text.
+Each recording prints its duration, peak and RMS, then a line per model with
+the mode, the wait after the audio ends, and the decoded text.
 
 Read the numbers this way: if speech above the threshold (RMS ~0.04) still
 transcribes empty, the model is the suspect, see step 5. If only loud speech
@@ -108,18 +108,17 @@ ever works, the mic gain is the problem, fix it at step 1.
 ## 5. Compare ASR engines
 
 If healthy audio still transcribes badly, the model is the suspect, not the
-capture. `cmd/transcribe --model` runs any model in the menu over the same WAVs, so
-the comparison is on your voice and your mic rather than on a published
-benchmark:
+capture. `dev replay` takes `--model` more than once and runs each over the
+same recordings, so the comparison is on your voice and your mic rather than
+on a published benchmark:
 
 ```
-$ for m in $(diktat model --names); do
-      echo "== $m"; go run ./cmd/transcribe --model $m recording.wav
-  done
+$ go run ./cmd/dev replay --model nemotron-speech-streaming-en-0.6b \
+    --model Qwen3-ASR-1.7B recording.wav
 ```
 
-Captures are not kept: a recording of every dictation is only worth writing to
-disk if something replays it, and nothing does. Record a reference clip with
+Debug mode keeps every dictation, and `dev replay` with no recordings named
+runs the ones it kept (`docs/debug.md`). Otherwise record a reference clip with
 `pw-record` when you want one to compare models against.
 
 Models are cached under `~/.cache/diktat/models` and never enter the nix build,

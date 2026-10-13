@@ -21,6 +21,7 @@ import (
 	"github.com/christian-oudard/diktat/internal/asr"
 	"github.com/christian-oudard/diktat/internal/audio"
 	"github.com/christian-oudard/diktat/internal/config"
+	"github.com/christian-oudard/diktat/internal/debuglog"
 	"github.com/christian-oudard/diktat/internal/human"
 	"github.com/christian-oudard/diktat/internal/ipc"
 	"github.com/christian-oudard/diktat/internal/models"
@@ -29,7 +30,6 @@ import (
 	"github.com/christian-oudard/diktat/internal/sco"
 	"github.com/christian-oudard/diktat/internal/suspend"
 	"github.com/christian-oudard/diktat/internal/warmup"
-	"github.com/christian-oudard/diktat/internal/xdg"
 )
 
 const (
@@ -305,7 +305,7 @@ type daemon struct {
 	// flight, which holds the model through busy like any other run.
 	captured []int16
 	cut      int
-	said     []spoken
+	said     []debuglog.Stretch
 	phrase   *phraseRun
 
 	// streams says the model in use takes a stream, which is then fed the
@@ -349,22 +349,15 @@ type bucketResult struct {
 	err  error
 }
 
-// spoken is one stretch of a dictation and what the model made of it. The
-// tags are for the debug log, which keeps every one.
-type spoken struct {
-	Start  float64 `json:"start"` // seconds into the recording
-	End    float64 `json:"end"`
-	TookMS int64   `json:"took_ms"`
-	Text   string  `json:"text"`
-}
-
-func newSpoken(start, end int, took time.Duration, text string) spoken {
-	return spoken{float64(start) / audio.SampleRate, float64(end) / audio.SampleRate,
-		took.Milliseconds(), text}
+// newSpoken is one stretch of a dictation, start to end in samples, and what
+// the model made of it.
+func newSpoken(start, end int, took time.Duration, text string) debuglog.Stretch {
+	return debuglog.Stretch{Start: float64(start) / audio.SampleRate, End: float64(end) / audio.SampleRate,
+		TookMS: took.Milliseconds(), Text: text}
 }
 
 // joined is a dictation's text: what each stretch said, in order.
-func joined(said []spoken) string {
+func joined(said []debuglog.Stretch) string {
 	var parts []string
 	for _, s := range said {
 		if s.Text != "" {
@@ -1181,7 +1174,7 @@ func (d *daemon) stopRecording() {
 	}
 	// Deferred so that writing it is not part of the wait it is kept to
 	// measure.
-	var wait *waitLog
+	var wait *debuglog.Wait
 	if debugEnabled {
 		defer func() { d.keep(pressed, samples, wait) }()
 	}
@@ -1299,36 +1292,23 @@ func (d *daemon) stopRecording() {
 			log.Println("The text is kept; `diktat repeat` types it again.")
 			d.failed = true
 		}
-		wait = &waitLog{time.Since(pressed).Milliseconds(), waited.Milliseconds(),
-			transcribed.Milliseconds(), (time.Since(t0) - transcribed).Milliseconds()}
+		wait = &debuglog.Wait{Total: time.Since(pressed).Milliseconds(), Model: waited.Milliseconds(),
+			Last: transcribed.Milliseconds(), Type: (time.Since(t0) - transcribed).Milliseconds()}
 		debugf("Typed %dms after the key: %dms waiting on the model, %dms on the last %.1fs, %dms typing",
 			wait.Total, wait.Model, wait.Last, float64(len(samples)-from)/audio.SampleRate, wait.Type)
 	}
 }
 
-// waitLog is how long a dictation took to type after the key stopped it, in
-// milliseconds, and where that went.
-type waitLog struct {
-	Total int64 `json:"total"`
-	Model int64 `json:"model"` // finishing what the model was running
-	Last  int64 `json:"last"`  // transcribing what followed the last phrase
-	Type  int64 `json:"type"`
-}
-
-// debugDir holds what debug mode keeps: each dictation's audio, and
-// dictations.jsonl, which says what was heard in it and how long it took.
-func debugDir() string { return filepath.Join(xdg.CacheDir(), "debug") }
-
-// keep writes a dictation's audio, named for the press that stopped it, and
-// its line in the debug log. wait is nil for a dictation that typed nothing.
-func (d *daemon) keep(pressed time.Time, samples []int16, wait *waitLog) {
-	dir := debugDir()
-	if err := os.MkdirAll(dir, 0700); err != nil {
+// keep writes a dictation's audio into the debug folder, named for the press
+// that stopped it, and its line in the log. wait is nil for a dictation that
+// typed nothing.
+func (d *daemon) keep(pressed time.Time, samples []int16, wait *debuglog.Wait) {
+	if err := os.MkdirAll(debuglog.Dir(), 0700); err != nil {
 		log.Printf("debug: %v", err)
 		return
 	}
 	name := pressed.Format("2006-01-02T15-04-05.000") + ".opus"
-	enc, err := startEncoder(filepath.Join(dir, name))
+	enc, err := startEncoder(filepath.Join(debuglog.Dir(), name))
 	if err != nil {
 		log.Printf("debug: %v", err)
 		return
@@ -1340,26 +1320,9 @@ func (d *daemon) keep(pressed time.Time, samples []int16, wait *waitLog) {
 		log.Printf("debug: %v", err)
 		return
 	}
-	line, err := json.Marshal(struct {
-		Audio   string   `json:"audio"`
-		Model   string   `json:"model"`
-		Seconds float64  `json:"seconds"`
-		Text    string   `json:"text"`
-		Phrases []spoken `json:"phrases"`
-		WaitMS  *waitLog `json:"wait_ms"`
-	}{name, filepath.Base(d.modelDir), float64(len(samples)) / audio.SampleRate,
-		joined(d.said), d.said, wait})
+	err = debuglog.Append(debuglog.Entry{Audio: name, Model: filepath.Base(d.modelDir),
+		Seconds: float64(len(samples)) / audio.SampleRate, Text: joined(d.said), Phrases: d.said, WaitMS: wait})
 	if err != nil {
-		log.Printf("debug: %v", err)
-		return
-	}
-	f, err := os.OpenFile(filepath.Join(dir, "dictations.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
-	if err != nil {
-		log.Printf("debug: %v", err)
-		return
-	}
-	defer f.Close()
-	if _, err := f.Write(append(line, '\n')); err != nil {
 		log.Printf("debug: %v", err)
 	}
 }

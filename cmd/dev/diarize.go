@@ -1,17 +1,3 @@
-// diarize answers who spoke when over a recording, which dictation never has
-// to ask: one person holds the microphone and the daemon types what they said.
-// A talk or an interview is the other shape, and the transcript is worthless
-// without the speaker labels, so the question comes first here.
-//
-// It runs a diarizer, not a transcriber. sortformer produces no text at all,
-// only speaker rows, which is why this is its own command rather than a flag
-// on cmd/transcribe.
-//
-// Deliberately not a diktat subcommand, for the same reason cmd/transcribe is
-// not: nothing here is part of dictating. The flake builds only cmd/diktat, so
-// this is `go run ./cmd/diarize` inside the devShell.
-//
-//	go run ./cmd/diarize [--model <name>] [--preset <point>] [-o segments.tsv] file.wav
 package main
 
 import (
@@ -42,14 +28,24 @@ var presets = map[string]transcribe.SortformerPreset{
 	"low":       transcribe.SortformerLowLatency,
 }
 
-func main() {
-	fs := flagset.New("diarize")
+// runDiarize answers who spoke when over a recording, which dictation never has
+// to ask: one person holds the microphone and the daemon types what they said.
+// A talk or an interview is the other shape, and the transcript is worthless
+// without the speaker labels, so the question comes first here.
+//
+// It runs a diarizer, not a transcriber. sortformer produces no text at all,
+// only speaker rows, which is why this is its own command rather than a mode
+// of replay.
+//
+//	go run ./cmd/dev diarize [--model <name>] [--preset <point>] [-o rows.tsv] recording
+func runDiarize(args []string) {
+	fs := flagset.New("dev diarize")
 	name := fs.String("model", "diar_streaming_sortformer_4spk-v2.1-F16.gguf", "diarizer to run")
 	preset := fs.String("preset", "very-high", "operating point: default, very-high, high, low")
 	out := fs.String("o", "", "write speaker rows to this TSV")
-	fs.Parse(os.Args[1:])
+	fs.Parse(args)
 	if fs.NArg() != 1 {
-		log.Fatal("usage: diarize [--model <name>] [--preset <point>] [-o segments.tsv] file.wav")
+		log.Fatal("usage: dev diarize [--model <name>] [--preset <point>] [-o rows.tsv] recording")
 	}
 
 	point, ok := presets[*preset]
@@ -57,7 +53,7 @@ func main() {
 		log.Fatalf("unknown preset %q", *preset)
 	}
 
-	samples, rate, err := wav.ReadWAV(fs.Arg(0))
+	samples, rate, err := wav.Read(fs.Arg(0))
 	if err != nil {
 		log.Fatalf("read audio: %v", err)
 	}
