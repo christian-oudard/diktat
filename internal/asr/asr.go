@@ -490,6 +490,14 @@ func (m *Model) StreamFinalize() error {
 	return err
 }
 
+// StreamReset abandons a stream that was begun and not finalized, so the next
+// run on the model starts clean. A stream already finished needs nothing.
+func (m *Model) StreamReset() {
+	if st := m.s.StreamState(); st == transcribe.StreamActive || st == transcribe.StreamFailed {
+		m.s.StreamReset()
+	}
+}
+
 // Committed is the stream's tokens that will not change, in order.
 func (m *Model) Committed() []transcribe.Token {
 	_, _, n := m.s.StreamCommitted()
@@ -670,6 +678,16 @@ func Chosen() (string, error) {
 
 // Name is the model, as the file it was loaded from calls it.
 func (m *Model) Name() string { return m.name }
+
+// StreamText is the stream's whole transcript as it stands, cleaned like
+// Transcribe's.
+func (m *Model) StreamText() (string, error) {
+	t, err := m.s.StreamText()
+	if err != nil {
+		return "", err
+	}
+	return dropAnnotations(t.Full), nil
+}
 
 // OnGPU reports whether compute landed on a GPU. Worth asking because the
 // costs that make a freshly loaded model slow, compiling shaders and

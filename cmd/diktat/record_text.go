@@ -15,93 +15,6 @@ import (
 	"github.com/christian-oudard/diktat/internal/models"
 )
 
-// recordText transcribes a recording while it is being made, through a model
-// that streams. The audio heard since the last feed is queued and fed in one
-// go, off the caller's loop, so the recording never waits on the model.
-type recordText struct {
-	// feed hands the model more audio and returns every word it has committed
-	// so far and whether that grew; finalize ends the stream and returns them
-	// all. Both are nil until the model has loaded.
-	feed     func([]int16) ([]stamped, bool, error)
-	finalize func() ([]stamped, error)
-	queued   []int16
-	run      chan fed
-	failed   bool
-}
-
-type fed struct {
-	words   []stamped
-	changed bool
-	err     error
-}
-
-func (rt *recordText) ready(feed func([]int16) ([]stamped, bool, error), finalize func() ([]stamped, error)) {
-	rt.feed, rt.finalize = feed, finalize
-}
-
-func (rt *recordText) add(samples []int16) { rt.queued = append(rt.queued, samples...) }
-
-// poll returns the words committed so far when the feed that finished since
-// the last poll changed them, and starts feeding what has queued meanwhile.
-// After a failure it does nothing: one that would repeat on every feed is not
-// worth repeating.
-func (rt *recordText) poll() ([]stamped, bool, error) {
-	if rt.failed || rt.feed == nil {
-		return nil, false, nil
-	}
-	var r fed
-	if rt.run != nil {
-		select {
-		case r = <-rt.run:
-			rt.run = nil
-			if r.err != nil {
-				rt.failed = true
-				return nil, false, r.err
-			}
-		default:
-			return nil, false, nil
-		}
-	}
-	if len(rt.queued) > 0 {
-		rt.start()
-	}
-	return r.words, r.changed, nil
-}
-
-// finish waits for the feed in flight, feeds what is left, and ends the
-// stream, for when the recording has stopped.
-func (rt *recordText) finish() ([]stamped, error) {
-	if rt.feed == nil {
-		return nil, nil
-	}
-	if rt.run != nil {
-		if r := <-rt.run; r.err != nil {
-			rt.failed = true
-			return nil, r.err
-		}
-	}
-	if rt.failed {
-		return nil, nil
-	}
-	if len(rt.queued) > 0 {
-		if _, _, err := rt.feed(rt.queued); err != nil {
-			return nil, err
-		}
-	}
-	return rt.finalize()
-}
-
-func (rt *recordText) start() {
-	run := make(chan fed, 1)
-	rt.run = run
-	samples, feed := rt.queued, rt.feed
-	rt.queued = nil
-	go func() {
-		words, changed, err := feed(samples)
-		run <- fed{words, changed, err}
-	}()
-}
-
 // wordsOf joins tokens into words: a token that starts with a space starts a
 // word. A word runs from its first token's start to its last one's end.
 func wordsOf(tokens []transcribe.Token) []stamped {
@@ -203,7 +116,8 @@ func loadTextModel() (*asr.Model, error) {
 	return m, nil
 }
 
-// feedText and finalizeText are recordText's two calls on a streaming model.
+// feedText and finalizeText are the two calls a streamer makes on a streaming
+// model for record --text.
 func feedText(m *asr.Model) func([]int16) ([]stamped, bool, error) {
 	return func(samples []int16) ([]stamped, bool, error) {
 		changed, err := m.StreamFeed(audio.Floats(samples))

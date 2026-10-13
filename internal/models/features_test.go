@@ -8,6 +8,7 @@ func TestFeaturesRendering(t *testing.T) {
 		want string
 	}{
 		{"parakeet-unified-en-0.6b", "streaming"},
+		{"nemotron-speech-streaming-en-0.6b", "streaming"},
 		{"parakeet-tdt-0.6b-v3", ""},
 	} {
 		s, ok := Lookup(c.name)

@@ -21,7 +21,7 @@ It also keeps every dictation in `$XDG_CACHE_HOME/diktat/debug/` (by default
 
 A capture with no samples at all keeps nothing. Nothing deletes these files,
 so delete the directory when you are done with them. `go run ./cmd/transcribe
--live` replays a kept recording through the same path the daemon used and
+--live` replays a kept recording through the same path the daemon used and
 reports the wait.
 
 Without `DIKTAT_DEBUG`, no audio or text is written for debugging.

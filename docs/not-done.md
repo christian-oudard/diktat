@@ -18,8 +18,7 @@ a second statement of the same thing is what drifts.
 - **Testing against real compositors.** Designed, not built. The in-process
   fake covers our reading of the protocol and nothing about what a compositor
   does. `docs/compositor-testing.md`.
-- **Streaming transcription.** Decided against for now, with the reasons, so
-  the decision is made once. `docs/streaming.md`.
+- **Typing streamed text while recording.** `docs/streaming.md`.
 - **Key bindings for other window managers.** `README.md`.
 
 

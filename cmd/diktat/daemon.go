@@ -308,6 +308,15 @@ type daemon struct {
 	said     []spoken
 	phrase   *phraseRun
 
+	// streams says the model in use takes a stream, which is then fed the
+	// dictation as it is recorded instead of cutting it into phrases; see
+	// docs/streaming.md. stream is the dictation's, on streamModel, nil when
+	// the dictation is not streaming. A feed in flight holds the model
+	// through busy like a phrase run.
+	streams     bool
+	stream      *streamer[string]
+	streamModel *asr.Model
+
 	mu        sync.Mutex
 	recording bool
 }
@@ -741,6 +750,11 @@ func (d *daemon) install(dir string, model *asr.Model) {
 		d.failed = false
 	}
 	d.model, d.modelDir = model, dir
+	streams, err := model.Streams()
+	if err != nil {
+		log.Printf("streaming: %v", err)
+	}
+	d.streams = streams
 	// What the model it replaces had words for says nothing about this one.
 	d.answered = false
 	d.publishModel()
@@ -945,7 +959,10 @@ func (d *daemon) startRecording() {
 	d.recording = true
 	d.mu.Unlock()
 	d.captured, d.cut, d.said = d.captured[:0], 0, nil
-	if d.detector != nil {
+	if d.streams {
+		d.stream, d.streamModel = dictationStream(d.model), d.model
+	}
+	if d.detector != nil || d.stream != nil {
 		d.listen = time.NewTicker(listenEvery)
 	}
 	// Whatever the rehearsal is on, this utterance wants the model more. The
@@ -1139,6 +1156,7 @@ func (d *daemon) stopRecording() {
 	// status directly, which turned a load still running into an idle bar.
 	defer d.restoreStatus()
 	defer d.warmNext()
+	defer d.endStream()
 
 	// Nothing arrived at all. Under the deadline that is a press too short to
 	// have collected a callback, and pressing the key twice quickly is an
@@ -1213,7 +1231,24 @@ func (d *daemon) stopRecording() {
 
 	t0 := time.Now()
 	kernels := d.model.CompiledKernelNames()
-	last, err := phrase.Transcribe(context.Background(), d.model, samples[d.cut:])
+	// from is where the audio not yet heard by the model begins.
+	from := d.cut
+	var last string
+	var err error
+	streamed := false
+	if d.stream != nil && d.streamModel == d.model {
+		from = len(samples) - len(d.stream.queued)
+		if last, err = d.stream.finish(); err == nil {
+			streamed = true
+		} else {
+			log.Printf("stream: %v; transcribing the whole dictation", err)
+			d.endStream()
+		}
+	}
+	if !streamed {
+		from = d.cut
+		last, err = phrase.Transcribe(context.Background(), d.model, samples[from:])
+	}
 	if err != nil {
 		log.Printf("transcribe: %v", err)
 		d.failed = true
@@ -1221,7 +1256,7 @@ func (d *daemon) stopRecording() {
 	}
 	transcribed := time.Since(t0)
 	debugf("%d phrases transcribed while recording, then %.1fs after the last",
-		len(d.said), float64(len(samples)-d.cut)/float64(audio.SampleRate))
+		len(d.said), float64(len(samples)-from)/float64(audio.SampleRate))
 	d.said = append(d.said, newSpoken(d.cut, len(samples), transcribed, last))
 	text := joined(d.said)
 	// Anything compiled here is a shape the warmup did not cover, and it is
@@ -1267,7 +1302,7 @@ func (d *daemon) stopRecording() {
 		wait = &waitLog{time.Since(pressed).Milliseconds(), waited.Milliseconds(),
 			transcribed.Milliseconds(), (time.Since(t0) - transcribed).Milliseconds()}
 		debugf("Typed %dms after the key: %dms waiting on the model, %dms on the last %.1fs, %dms typing",
-			wait.Total, wait.Model, wait.Last, float64(len(samples)-d.cut)/audio.SampleRate, wait.Type)
+			wait.Total, wait.Model, wait.Last, float64(len(samples)-from)/audio.SampleRate, wait.Type)
 	}
 }
 
@@ -1335,8 +1370,9 @@ func (d *daemon) keep(pressed time.Time, samples []int16, wait *waitLog) {
 const listenEvery = 250 * time.Millisecond
 
 // nextPhrase takes in what the microphone has heard since the last look and,
-// when the model is free, starts looking for a finished phrase in what no
-// phrase covers yet and transcribing it.
+// when the model is free, feeds it to the stream if the model streams, or else
+// starts looking for a finished phrase in what no phrase covers yet and
+// transcribing it.
 func (d *daemon) nextPhrase() {
 	d.take(d.recorder.Drain())
 	if d.busy != nil {
@@ -1363,6 +1399,13 @@ func (d *daemon) nextPhrase() {
 	if d.model == nil {
 		return
 	}
+	if d.stream != nil {
+		d.feed()
+		return
+	}
+	if d.detector == nil {
+		return
+	}
 	done := make(chan struct{})
 	run := &phraseRun{done: done}
 	d.busy, d.phrase = done, run
@@ -1380,6 +1423,63 @@ func (d *daemon) nextPhrase() {
 	}()
 }
 
+// feed hands the stream what the microphone has heard since the last feed.
+// A failed stream is given up for this dictation, which is then transcribed
+// whole when the key is pressed.
+func (d *daemon) feed() {
+	// The model was switched mid-dictation, and the stream went with the one
+	// it replaced.
+	if d.streamModel != d.model {
+		d.stream, d.streamModel = nil, nil
+		d.stopListening()
+		return
+	}
+	if _, _, err := d.stream.poll(); err != nil {
+		log.Printf("stream: %v", err)
+		d.endStream()
+		d.stopListening()
+		return
+	}
+	d.busy = d.stream.busy()
+}
+
+// dictationStream streams a dictation to m, beginning the stream with the
+// first feed, and ends with the whole transcript.
+func dictationStream(m *asr.Model) *streamer[string] {
+	begun := false
+	s := &streamer[string]{}
+	s.ready(
+		func(samples []int16) (string, bool, error) {
+			if !begun {
+				if err := m.StreamBegin(context.Background()); err != nil {
+					return "", false, err
+				}
+				begun = true
+			}
+			_, err := m.StreamFeed(audio.Floats(samples))
+			return "", false, err
+		},
+		func() (string, error) {
+			if !begun {
+				return "", nil
+			}
+			if err := m.StreamFinalize(); err != nil {
+				return "", err
+			}
+			return m.StreamText()
+		})
+	return s
+}
+
+// endStream drops the dictation's stream, resetting it if it was left open on
+// the model in use, so the next run on that model starts clean.
+func (d *daemon) endStream() {
+	if d.streamModel != nil && d.streamModel == d.model {
+		d.model.StreamReset()
+	}
+	d.stream, d.streamModel = nil, nil
+}
+
 func (d *daemon) stopListening() {
 	if d.listen != nil {
 		d.listen.Stop()
@@ -1387,12 +1487,16 @@ func (d *daemon) stopListening() {
 	}
 }
 
-// take adds what the microphone delivered to the dictation, up to the guard
-// against a device that delivers far more than it says, which the recorder
-// applies only between drains.
+// take adds what the microphone delivered to the dictation, and to its stream
+// if it has one, up to the guard against a device that delivers far more than
+// it says, which the recorder applies only between drains.
 func (d *daemon) take(samples []int16) {
 	room := audio.SampleRate*int(audio.RunawayGuard/time.Second) - len(d.captured)
-	d.captured = append(d.captured, samples[:min(len(samples), max(room, 0))]...)
+	samples = samples[:min(len(samples), max(room, 0))]
+	d.captured = append(d.captured, samples...)
+	if d.stream != nil {
+		d.stream.add(samples)
+	}
 }
 
 // landPhrase takes in the phrase run that has finished, if there is one. A

@@ -1,5 +1,8 @@
 # Transcribing while you speak
 
+This applies to models that do not stream; one that does hears the whole
+dictation as it is spoken instead (`docs/streaming.md`).
+
 While a dictation is recording, the daemon transcribes what has already been
 said, one phrase at a time, so that when the recording stops only the last
 phrase is left to transcribe. The wait after the key press is the time to

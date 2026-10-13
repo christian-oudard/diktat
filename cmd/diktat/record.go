@@ -83,7 +83,7 @@ func runRecord(args []string) {
 	}
 	// textErr is why the text stopped, said once the recording is safe.
 	var textErr error
-	var rt recordText
+	var rt streamer[[]stamped]
 	// On a terminal the meter and the text share the screen through a board,
 	// which puts each word under its own blocks. Otherwise the text goes
 	// where it was sent and the meter is never broken.

@@ -171,6 +171,7 @@ var Catalog = []Spec{
 	{"parakeet-tdt-0.6b-v2", "Q5_K_M", 514, []string{"en"}},
 	{"parakeet-tdt-0.6b-v3", "Q5_K_M", 523, european25},
 	{"parakeet-unified-en-0.6b", "Q5_K_M", 516, []string{"en"}},
+	{"nemotron-speech-streaming-en-0.6b", "Q5_K_M", 514, []string{"en"}},
 	{"whisper-large-v3-turbo", "Q5_K_M", 590, nil},
 	{"Qwen3-ASR-0.6B", "Q5_K_M", 615, qwen3Langs},
 	{"canary-1b-v2", "Q5_K_M", 797, european25},
@@ -179,7 +180,10 @@ var Catalog = []Spec{
 		"en", "ar", "de", "el", "es", "fr", "it", "ja", "ko", "nl", "pl", "pt", "vi", "zh"}},
 }
 
-var streams = map[string]bool{"parakeet-unified-en-0.6b": true}
+var streams = map[string]bool{
+	"parakeet-unified-en-0.6b":          true,
+	"nemotron-speech-streaming-en-0.6b": true,
+}
 
 // Streams reports whether the model can transcribe audio while it is still
 // arriving.

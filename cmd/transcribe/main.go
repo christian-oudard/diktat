@@ -8,7 +8,7 @@
 // devShell. It lives in Go rather than in a script because it has to run the
 // real pipeline, and a script would have to reimplement it.
 //
-//	go run ./cmd/transcribe [--model <name>] [--live] recording...
+//	go run ./cmd/transcribe [--model <name>] [--live | --stream] recording...
 package main
 
 import (
@@ -54,6 +54,7 @@ func main() {
 	limitFlag := fs.Duration("limit", 0, "cut audio at this length instead of what the model can take")
 	name := fs.String("model", models.Default, "model to transcribe with")
 	liveFlag := fs.Bool("live", false, "replay each file as if dictated, transcribing phrases as the pauses arrive")
+	streamFlag := fs.Bool("stream", false, "replay each file as if dictated, streaming it to the model as it arrives")
 	fs.Parse(os.Args[1:])
 
 	modelPath := models.Resolve(*name)
@@ -96,6 +97,10 @@ func main() {
 		}
 		if det != nil {
 			live(model, det, path, stored)
+			continue
+		}
+		if *streamFlag {
+			stream(model, path, stored)
 			continue
 		}
 		peak, rms := audio.Levels(stored)
@@ -188,4 +193,49 @@ func live(model *asr.Model, det *phrase.Detector, path string, stored []int16) {
 	fmt.Printf("%-24s %5.1fs  last %4.1fs  wait %6s  ->  %q\n", path, clip.Seconds(),
 		float64(len(stored)-cut)/audio.SampleRate, (behind + time.Since(t0)).Round(time.Millisecond),
 		strings.Join(parts, " "))
+}
+
+// stream replays a file the way a streaming dictation would hear it: a
+// quarter second at a time, each fed once it has arrived and the model is
+// done with the one before. The wait is from the end of the file to the
+// final text, which is what typing on release would type. lag is, for each
+// token, how long after it was spoken the feed came that committed it, which
+// is how late words would appear if they were typed as they committed.
+func stream(model *asr.Model, path string, stored []int16) {
+	if err := model.StreamBegin(context.Background()); err != nil {
+		log.Fatalf("%s: stream: %v", path, err)
+	}
+	step := audio.SampleRate / 4
+	free := time.Duration(0) // when the model is next free, in the file's time
+	var lagSum, lagMax time.Duration
+	seen := 0
+	for at := 0; at < len(stored); at += step {
+		end := min(at+step, len(stored))
+		arrived := time.Duration(end) * time.Second / audio.SampleRate
+		t0 := time.Now()
+		if _, err := model.StreamFeed(audio.Floats(stored[at:end])); err != nil {
+			log.Fatalf("%s: feed: %v", path, err)
+		}
+		free = max(free, arrived) + time.Since(t0)
+		committed := model.Committed()
+		for _, t := range committed[seen:] {
+			lag := arrived - t.End
+			lagSum += lag
+			lagMax = max(lagMax, lag)
+		}
+		seen = len(committed)
+	}
+	clip := time.Duration(len(stored)) * time.Second / audio.SampleRate
+	t0 := time.Now()
+	if err := model.StreamFinalize(); err != nil {
+		log.Fatalf("%s: finalize: %v", path, err)
+	}
+	wait := max(free-clip, 0) + time.Since(t0)
+	text, err := model.StreamText()
+	if err != nil {
+		log.Fatalf("%s: text: %v", path, err)
+	}
+	fmt.Printf("%-24s %5.1fs  wait %6s  lag mean %s max %s  ->  %q\n", path, clip.Seconds(),
+		wait.Round(time.Millisecond), (lagSum / time.Duration(max(seen, 1))).Round(time.Millisecond),
+		lagMax.Round(time.Millisecond), text)
 }

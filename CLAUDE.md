@@ -37,8 +37,9 @@ never implicitly.
   It waits instead, says so on the bar, and loads what `diktat model` names.
   Keeps the model loaded, rehearses
   it between dictations, toggles recording on SIGUSR1, transcribes, types via
-  wtype. While recording it transcribes each phrase that ends in a pause, so
-  only the last is left when the key is pressed again; see `docs/phrases.md`. Runs for the session: it never starts recording by itself and never
+  wtype. While recording it streams the dictation to a model that streams
+  (`docs/streaming.md`), or else transcribes each phrase that ends in a pause,
+  so little is left when the key is pressed again; see `docs/phrases.md`. Runs for the session: it never starts recording by itself and never
   exits by itself. Signal handlers are installed before the model load, so a
   toggle during startup is queued rather than killing the process. Stopped
   mid-dictation, it finishes the dictation as the key would have, then exits. Recording is
@@ -50,10 +51,12 @@ never implicitly.
   the prompt keeps the fetch from being silent.
 - `cmd/transcribe/` - runs the daemon's pipeline over WAV files, to compare
   models on fixed audio. Warms first, like the daemon, since an unwarmed model
-  cuts long audio differently and that changes the transcript.
+  cuts long audio differently and that changes the transcript. `--stream`
+  replays a file through a streaming model a quarter second at a time and
+  reports the wait after the audio ends and how far committed text trails it.
 - `cmd/warmbench/` - measures what each rehearsal length compiles, which is how
   the bucket set is chosen rather than guessed.
-- `internal/models` - the menu: twelve entries, none bundled, all fetched
+- `internal/models` - the menu: thirteen entries, none bundled, all fetched
   from the `handy-computer` GGUF repos into `~/.cache/diktat/models`, so no
   model is a special case. An entry is there because nothing else on the menu
   beats it on accuracy, size, speed and languages at once, and nothing needs
